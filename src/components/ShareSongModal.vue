@@ -72,11 +72,7 @@ function copyCode() {
             點擊下方按鈕上傳到 Firebase 雲端空間，將會產生一組 <strong>6 碼代碼</strong>。任何人在 <strong>24 小時內</strong> 只要輸入這組代碼就能直接匯入這首歌！
           </p>
           <div v-if="errorMsg" class="error-tip">{{ errorMsg }}</div>
-          <button
-            class="btn btn-primary btn-block"
-            :disabled="isUploading"
-            @click="handleStartShare"
-          >
+          <button class="btn btn-primary btn-block" :disabled="isUploading" @click="handleStartShare">
             <span class="material-symbols-outlined btn-icon-inline">cloud_sync</span>
             {{ isUploading ? '正在建立分享碼...' : '立即產生 6 碼分享代碼' }}
           </button>
@@ -123,6 +119,7 @@ function copyCode() {
   z-index: 150;
   padding: 1rem;
 }
+
 .modal-card {
   background: white;
   width: 100%;
@@ -133,6 +130,7 @@ function copyCode() {
   display: flex;
   flex-direction: column;
 }
+
 .modal-header {
   padding: 1.25rem 1.5rem;
   border-bottom: 1px solid #e2e8f0;
@@ -140,25 +138,30 @@ function copyCode() {
   justify-content: space-between;
   align-items: center;
 }
+
 .title-wrap {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
+
 .header-icon {
   color: #6366f1;
 }
+
 .modal-header h3 {
   font-size: 1.2rem;
   font-weight: 700;
   color: #0f172a;
 }
+
 .modal-body {
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
 }
+
 .song-summary {
   display: flex;
   align-items: center;
@@ -168,6 +171,7 @@ function copyCode() {
   border-radius: 12px;
   border: 1px solid #e2e8f0;
 }
+
 .song-icon {
   font-size: 2rem;
   color: #6366f1;
@@ -175,21 +179,25 @@ function copyCode() {
   border-radius: 8px;
   padding: 0.25rem;
 }
+
 .song-title {
   font-size: 1.05rem;
   font-weight: 700;
   color: #1e293b;
 }
+
 .song-meta {
   font-size: 0.8rem;
   color: #64748b;
 }
+
 .description {
   font-size: 0.9rem;
   color: #475569;
   line-height: 1.6;
   margin-bottom: 1rem;
 }
+
 .code-box {
   background: linear-gradient(135deg, #eef2ff, #f5f3ff);
   border: 2px dashed #818cf8;
@@ -200,6 +208,7 @@ function copyCode() {
   flex-direction: column;
   gap: 0.4rem;
 }
+
 .code-label {
   font-size: 0.8rem;
   font-weight: 700;
@@ -207,6 +216,7 @@ function copyCode() {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
 .code-display {
   font-size: 2.2rem;
   font-weight: 800;
@@ -214,13 +224,16 @@ function copyCode() {
   color: #1e1b4b;
   font-family: monospace;
 }
+
 .code-validity {
   font-size: 0.75rem;
   color: #64748b;
 }
+
 .copy-actions {
   margin-top: 1rem;
 }
+
 .guide-tip {
   font-size: 0.85rem;
   color: #475569;
@@ -229,14 +242,17 @@ function copyCode() {
   padding: 0.6rem 0.8rem;
   border-radius: 8px;
 }
+
 .error-tip {
   color: #ef4444;
   font-size: 0.85rem;
   margin-bottom: 0.75rem;
 }
+
 .btn-block {
   width: 100%;
 }
+
 .modal-footer {
   padding: 0.85rem 1.5rem;
   border-top: 1px solid #e2e8f0;
@@ -244,6 +260,7 @@ function copyCode() {
   justify-content: flex-end;
   background: #f8fafc;
 }
+
 .btn {
   padding: 0.6rem 1.2rem;
   border-radius: 9999px;
@@ -251,25 +268,31 @@ function copyCode() {
   cursor: pointer;
   border: none;
 }
+
 .btn-primary {
   background: #6366f1;
   color: white;
 }
+
 .btn-primary:hover:not(:disabled) {
   background: #4f46e5;
 }
+
 .btn-secondary {
   background: #ffffff;
   border: 1px solid #cbd5e1;
   color: #334155;
 }
+
 .btn-secondary:hover {
   background: #f8fafc;
 }
+
 .btn-ghost {
   background: transparent;
   color: #64748b;
 }
+
 .btn-icon {
   background: transparent;
   border: none;

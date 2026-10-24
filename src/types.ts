@@ -5,6 +5,8 @@ export interface Song {
   lyrics: string;
   icon?: string; // Google Material Symbol name, e.g. 'music_note'
   createdAt: number;
+  shareCode?: string; // 最近產生的雲端分享代碼
+  shareTime?: number; // 產生分享代碼的時間戳記
 }
 
 export interface SpeechSettings {
