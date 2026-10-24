@@ -12,9 +12,8 @@ export interface SpeechToken {
   pauseMs?: number;
 }
 
-export function parseTokens(text: string, pausePerSpaceMs: number): SpeechToken[] {
+export function parseTokens(text: string, pausePerSpaceMs: number, pausePerNewlineMs: number): SpeechToken[] {
   const tokens: SpeechToken[] = [];
-  // 逐字元或分詞掃描，連續空格累積停頓
   let currentWord = '';
 
   const pushWord = () => {
@@ -27,7 +26,7 @@ export function parseTokens(text: string, pausePerSpaceMs: number): SpeechToken[
   for (let i = 0; i < text.length; i++) {
     const char = text[i];
     if (char === ' ' || char === '\u3000') {
-      // 遇到空格：停頓時間減半 (預設由 320ms 降為 pausePerSpaceMs / 2 或可直接傳入更小的值)
+      // 遇到空格：依 pausePerSpaceMs 停頓
       pushWord();
       let spaceCount = 1;
       while (i + 1 < text.length && (text[i + 1] === ' ' || text[i + 1] === '\u3000')) {
@@ -39,11 +38,11 @@ export function parseTokens(text: string, pausePerSpaceMs: number): SpeechToken[
         pauseMs: Math.round(spaceCount * pausePerSpaceMs)
       });
     } else if (char === '\n') {
-      // 單行換行呼吸停頓減半
+      // 單行換行：依 pausePerNewlineMs 停頓
       pushWord();
       tokens.push({
         type: 'pause',
-        pauseMs: Math.round(pausePerSpaceMs * 0.5)
+        pauseMs: Math.round(pausePerNewlineMs)
       });
     } else {
       currentWord += char;
@@ -88,7 +87,11 @@ export class LyricSpeaker {
       return false;
     }
 
-    const tokens = parseTokens(paragraphText, settings.pausePerSpaceMs || 320);
+    const tokens = parseTokens(
+      paragraphText,
+      settings.pausePerSpaceMs ?? 160,
+      settings.pausePerNewlineMs ?? 80
+    );
     const voices = window.speechSynthesis.getVoices();
     let selectedVoice: SpeechSynthesisVoice | undefined;
 

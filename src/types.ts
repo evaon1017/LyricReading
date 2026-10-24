@@ -11,5 +11,7 @@ export interface SpeechSettings {
   rate: number; // 語速 0.5 - 2.0
   pitch: number; // 音調 0.5 - 2.0
   voiceURI: string;
-  pausePerSpaceMs: number; // 每個空白停頓的毫秒數 (預設約 300ms ~ 一個字的讀音長度)
+  pausePerSpaceMs: number; // 每個空白停頓的毫秒數 (預設 160ms)
+  pausePerNewlineMs: number; // 單換行停頓毫秒數 (預設 80ms)
+  pausePerParagraphMs: number; // 換段（段落間）停頓毫秒數 (預設 500ms)
 }

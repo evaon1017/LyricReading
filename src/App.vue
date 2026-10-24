@@ -5,14 +5,26 @@ import { loadSongs, saveSongs, extractYouTubeId, fetchYouTubeTitle } from './uti
 import { LyricSpeaker } from './utils/speechHelper';
 import { DEFAULT_SONG_ICON } from './utils/iconHelper';
 import IconPickerModal from './components/IconPickerModal.vue';
+import BatchExportModal from './components/BatchExportModal.vue';
+import ShareSongModal from './components/ShareSongModal.vue';
+import FetchSongModal from './components/FetchSongModal.vue';
+import type { SharedData } from './utils/firebaseService';
+
+const SPEECH_SETTINGS_KEY = 'kid_speech_settings';
 
 // 狀態管理
 const songs = ref<Song[]>([]);
 const currentSongId = ref<string>('');
 const isEditing = ref<boolean>(false);
 const showAddModal = ref<boolean>(false);
+const showBatchExport = ref<boolean>(false);
+const showShareModal = ref<boolean>(false);
+const showFetchModal = ref<boolean>(false);
 const showPlayer = ref<boolean>(false);
 const showSettings = ref<boolean>(false);
+
+// 語音設定儲存成功提示
+const showSettingsSaved = ref<boolean>(false);
 
 // 圖示挑選開窗狀態
 const showIconPicker = ref<boolean>(false);
@@ -22,21 +34,50 @@ const iconPickerTarget = ref<'add' | 'edit'>('add');
 const draggedSongIndex = ref<number | null>(null);
 const dragOverSongIndex = ref<number | null>(null);
 
-// 語音朗讀設定 (空白停頓預設由 320ms 減半為 160ms，可設定至更短 40ms)
-const speechSettings = ref<SpeechSettings>({
+// 語音朗讀設定 (三段停頓拆分：空白、換行、換段)
+const defaultSettings: SpeechSettings = {
   rate: 0.85, // 適合小朋友學唱的清晰語速
   pitch: 1.1, // 親切活潑音調
   voiceURI: '',
-  pausePerSpaceMs: 160 // 停頓時間減半，約 160ms (單行換行自動以 80ms 呼吸停頓)
-});
+  pausePerSpaceMs: 160, // 空白停頓時間 (預設 160ms)
+  pausePerNewlineMs: 80, // 單換行停頓時間 (預設 80ms)
+  pausePerParagraphMs: 500 // 換段停頓時間 (預設 500ms)
+};
+
+function loadSpeechSettings(): SpeechSettings {
+  try {
+    const raw = localStorage.getItem(SPEECH_SETTINGS_KEY);
+    if (raw) {
+      return { ...defaultSettings, ...JSON.parse(raw) };
+    }
+  } catch (e) {
+    console.error('Failed to load speech settings:', e);
+  }
+  return { ...defaultSettings };
+}
+
+function saveSpeechSettings() {
+  try {
+    localStorage.setItem(SPEECH_SETTINGS_KEY, JSON.stringify(speechSettings.value));
+    showSettingsSaved.value = true;
+    setTimeout(() => {
+      showSettingsSaved.value = false;
+    }, 2000);
+  } catch (e) {
+    console.error('Failed to save speech settings:', e);
+  }
+}
+
+const speechSettings = ref<SpeechSettings>(loadSpeechSettings());
 const availableVoices = ref<SpeechSynthesisVoice[]>([]);
 
 // 播放朗讀狀態
 const speaker = new LyricSpeaker();
 const isPlaying = ref<boolean>(false);
 const isSequentialPlaying = ref<boolean>(false);
-const activeParagraphIndex = ref<number | null>(null);
-const lastPlayedParagraphIndex = ref<number | null>(null);
+const activeParagraphIndex = ref<number | null>(null); // 當前正在播放中（進行中）的段落
+const lastAttemptedParagraphIndex = ref<number | null>(null); // 最近一次點擊或嘗試播放的段落 (用於高亮標記)
+const lastCompletedParagraphIndex = ref<number | null>(null); // 真正完整朗讀「念完」的最後段落 (用於接續播放判斷)
 
 // 編輯中的暫存資料
 const editTitle = ref<string>('');
@@ -113,7 +154,8 @@ function selectSong(id: string) {
   currentSongId.value = id;
   isEditing.value = false;
   activeParagraphIndex.value = null;
-  lastPlayedParagraphIndex.value = null;
+  lastAttemptedParagraphIndex.value = null;
+  lastCompletedParagraphIndex.value = null;
 }
 
 // 自動抓取 YouTube 標題 (新增歌曲時)
@@ -243,7 +285,7 @@ function triggerImport() {
   }
 }
 
-// 處理匯入歌曲
+// 處理匯入歌曲 (支援單曲 .HanaSong 或 批次 .HanaSongs)
 function handleFileImport(event: Event) {
   const target = event.target as HTMLInputElement;
   const file = target.files?.[0];
@@ -255,7 +297,30 @@ function handleFileImport(event: Event) {
       const content = e.target?.result as string;
       const parsed = JSON.parse(content);
 
-      // 支援 { format: 'HanaSong', song: Song } 或直接是 Song 物件
+      // 情況 1: 批次匯入 (.HanaSongs)
+      if (parsed.format === 'HanaSongs' && Array.isArray(parsed.songs)) {
+        const incomingSongs: Song[] = parsed.songs.map((s: any) => ({
+          id: 'song-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          title: s.title || '未命名歌曲',
+          youtubeUrl: s.youtubeUrl || '',
+          lyrics: s.lyrics || '',
+          icon: s.icon || DEFAULT_SONG_ICON,
+          createdAt: Date.now()
+        }));
+
+        if (incomingSongs.length === 0) {
+          alert('該批次檔案內未包含任何歌曲！');
+          return;
+        }
+
+        songs.value.unshift(...incomingSongs);
+        saveSongs(songs.value);
+        currentSongId.value = incomingSongs[0].id;
+        alert(`🎉 成功批次匯入 ${incomingSongs.length} 首歌曲！`);
+        return;
+      }
+
+      // 情況 2: 單曲匯入 (.HanaSong)
       let importedSong: Partial<Song> | null = null;
       if (parsed.song && typeof parsed.song === 'object') {
         importedSong = parsed.song;
@@ -264,7 +329,7 @@ function handleFileImport(event: Event) {
       }
 
       if (!importedSong || !importedSong.title || !importedSong.lyrics) {
-        alert('匯入失敗：檔案格式不符合 .HanaSong 格式！');
+        alert('匯入失敗：檔案格式不符合 .HanaSong 或 .HanaSongs 格式！');
         return;
       }
 
@@ -283,10 +348,42 @@ function handleFileImport(event: Event) {
       alert(`🎉 成功匯入歌曲《${newSong.title}》！`);
     } catch (err: any) {
       console.error('Import error:', err);
-      alert('解析檔案失敗，請確認是否為有效的 .HanaSong 檔案');
+      alert('解析檔案失敗，請確認是否為有效的 .HanaSong 或 .HanaSongs 檔案');
     }
   };
   reader.readAsText(file);
+}
+
+// 處理雲端代碼取歌成功 (Firebase SharedData)
+function handleCloudImportSuccess(data: SharedData) {
+  if (data.format === 'HanaSongs' && Array.isArray(data.songs)) {
+    const incomingSongs: Song[] = data.songs.map((s) => ({
+      id: 'song-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      title: s.title || '未命名歌曲',
+      youtubeUrl: s.youtubeUrl || '',
+      lyrics: s.lyrics || '',
+      icon: s.icon || DEFAULT_SONG_ICON,
+      createdAt: Date.now()
+    }));
+    songs.value.unshift(...incomingSongs);
+    saveSongs(songs.value);
+    currentSongId.value = incomingSongs[0].id;
+    alert(`🎉 成功從雲端同步匯入 ${incomingSongs.length} 首歌曲！`);
+  } else if (data.song) {
+    const s = data.song;
+    const newSong: Song = {
+      id: 'song-' + Date.now(),
+      title: s.title,
+      youtubeUrl: s.youtubeUrl || '',
+      lyrics: s.lyrics,
+      icon: s.icon || DEFAULT_SONG_ICON,
+      createdAt: Date.now()
+    };
+    songs.value.unshift(newSong);
+    saveSongs(songs.value);
+    currentSongId.value = newSong.id;
+    alert(`🎉 成功從雲端匯入歌曲《${newSong.title}》！`);
+  }
 }
 
 // 刪除當前歌曲 (包含確認 confirm 視窗)
@@ -357,7 +454,7 @@ function stopSpeaking() {
 // 朗讀單一段落
 async function playParagraph(index: number) {
   if (isPlaying.value && activeParagraphIndex.value === index) {
-    // 再次點擊正在播的段落即停止
+    // 再次點擊正在播的段落即停止（此時中斷，未播完該段，故 lastCompletedParagraphIndex 不變）
     stopSpeaking();
     return;
   }
@@ -366,7 +463,7 @@ async function playParagraph(index: number) {
   isPlaying.value = true;
   isSequentialPlaying.value = false;
   activeParagraphIndex.value = index;
-  lastPlayedParagraphIndex.value = index;
+  lastAttemptedParagraphIndex.value = index;
 
   const paragraphText = lyricParagraphs.value[index];
   if (!paragraphText) {
@@ -376,7 +473,8 @@ async function playParagraph(index: number) {
 
   const finished = await speaker.speakParagraph(paragraphText, speechSettings.value);
   if (finished && activeParagraphIndex.value === index) {
-    // 播放完成，解除正在播放狀態，但保留 lastPlayedParagraphIndex 供接續播放判斷
+    // 只有真正「播放完畢」時，才更新 lastCompletedParagraphIndex
+    lastCompletedParagraphIndex.value = index;
     isPlaying.value = false;
     activeParagraphIndex.value = null;
   }
@@ -395,19 +493,30 @@ async function playAllSequentially() {
 
   let startIndex = 0;
 
-  // 判斷接續起點：
-  // 1. 若當前正有段落「播放中」：從當前這一段 (N) 繼續播
-  // 2. 若不在播放中，但有「上次已播放完畢的段落 (N)」：
-  //    - 如果 N 已是最後一段，則從第 1 段 (索引 0) 開始播放
-  //    - 否則從第 N + 1 段開始接續播放
-  // 3. 若從未播放過：從第 1 段 (索引 0) 開始播放
+  // 判斷接續起點核心規則：
+  // 1. 若當前「正在播放第 N 段中」被按了接續：從當前第 N 段開始
+  // 2. 若當前處於停止狀態（或中途被使用者手動停止/中斷）：
+  //    - 如果前一次點擊/播放的段落是 N，且該段「尚未完整播完」：重播第 N 段！
+  //    - 如果第 N 段「已經完整播完」：
+  //      * 若 N 已是最後一段：從頭（第 1 段，索引 0）開始播放
+  //      * 若未到最後一段：從第 N + 1 段開始接續播放
+  // 3. 若從未播放過任何段落：從第 1 段（索引 0）開始
   if (isPlaying.value && activeParagraphIndex.value !== null) {
     startIndex = activeParagraphIndex.value;
-  } else if (lastPlayedParagraphIndex.value !== null) {
-    if (lastPlayedParagraphIndex.value >= paragraphs.length - 1) {
-      startIndex = 0; // 已播完最後一段，從頭開始
+  } else if (lastAttemptedParagraphIndex.value !== null) {
+    const attemptIdx = lastAttemptedParagraphIndex.value;
+    const isAttemptCompleted = (lastCompletedParagraphIndex.value === attemptIdx);
+
+    if (isAttemptCompleted) {
+      // 該段已完整念完 -> 下次播第 N+1 段
+      if (attemptIdx >= paragraphs.length - 1) {
+        startIndex = 0; // 若已播完全部最後一段，從頭開始
+      } else {
+        startIndex = attemptIdx + 1;
+      }
     } else {
-      startIndex = lastPlayedParagraphIndex.value + 1; // 從第 N+1 段開始
+      // 該段未完整念完 (中途暫停或中斷) -> 下次重新播放該段 N
+      startIndex = attemptIdx;
     }
   } else {
     startIndex = 0;
@@ -421,14 +530,18 @@ async function playAllSequentially() {
     if (!isPlaying.value || !isSequentialPlaying.value) break;
 
     activeParagraphIndex.value = i;
-    lastPlayedParagraphIndex.value = i;
+    lastAttemptedParagraphIndex.value = i;
 
     const finished = await speaker.speakParagraph(paragraphs[i], speechSettings.value);
     if (!finished) break;
 
-    // 段落間稍作停頓 (約 600ms)，更有歌唱學唱的段落呼吸感
+    // 真正播完此段落
+    lastCompletedParagraphIndex.value = i;
+
+    // 段落間依據 pausePerParagraphMs 停頓 (預設 500ms)
     if (i < paragraphs.length - 1 && isPlaying.value) {
-      await new Promise((r) => setTimeout(r, 600));
+      const pDelay = speechSettings.value.pausePerParagraphMs ?? 500;
+      await new Promise((r) => setTimeout(r, pDelay));
     }
   }
 
@@ -450,11 +563,11 @@ async function playAllSequentially() {
         </div>
       </div>
       <div class="header-actions">
-        <!-- 隱藏的檔案選擇器 (副檔名 .HanaSong 或 .json) -->
+        <!-- 隱藏的檔案選擇器 (支援 .HanaSong, .HanaSongs, .json) -->
         <input
           ref="fileInputRef"
           type="file"
-          accept=".HanaSong,.json"
+          accept=".HanaSong,.HanaSongs,.json"
           style="display: none"
           @change="handleFileImport"
         />
@@ -463,7 +576,15 @@ async function playAllSequentially() {
           <span class="material-symbols-outlined btn-icon-inline">tune</span>
           語音設定
         </button>
-        <button class="btn btn-secondary" @click="triggerImport" title="匯入 .HanaSong 格式歌曲">
+        <button class="btn btn-secondary" @click="showFetchModal = true" title="輸入 6 碼代碼從雲端同步歌曲">
+          <span class="material-symbols-outlined btn-icon-inline">cloud_download</span>
+          雲端取歌
+        </button>
+        <button class="btn btn-secondary" @click="showBatchExport = true" title="勾選多首歌曲批次匯出">
+          <span class="material-symbols-outlined btn-icon-inline">archive</span>
+          批次匯出
+        </button>
+        <button class="btn btn-secondary" @click="triggerImport" title="匯入 .HanaSong 或 .HanaSongs 檔案">
           <span class="material-symbols-outlined btn-icon-inline">file_upload</span>
           匯入歌曲
         </button>
@@ -481,7 +602,14 @@ async function playAllSequentially() {
           <span class="material-symbols-outlined">settings_voice</span>
           <h3>朗讀與停頓節奏設定</h3>
         </div>
-        <button class="btn-icon" @click="showSettings = false">✕</button>
+        <div class="settings-header-actions">
+          <span v-if="showSettingsSaved" class="saved-badge">✓ 設定已儲存！</span>
+          <button class="btn btn-primary btn-sm" @click="saveSpeechSettings">
+            <span class="material-symbols-outlined btn-icon-inline">save</span>
+            儲存設定
+          </button>
+          <button class="btn-icon" @click="showSettings = false">✕</button>
+        </div>
       </div>
       <div class="settings-body">
         <div class="form-group">
@@ -508,18 +636,48 @@ async function playAllSequentially() {
         </div>
         <div class="form-group">
           <div class="label-with-val">
-            <label>空白停頓時間 (每個空格停頓長度)：</label>
+            <label>1. 空白停頓時間 (每 1 個空格)：</label>
             <span class="badge">{{ speechSettings.pausePerSpaceMs }} ms</span>
           </div>
           <input
             type="range"
-            min="40"
-            max="600"
+            min="20"
+            max="500"
             step="10"
             v-model.number="speechSettings.pausePerSpaceMs"
             class="range-slider"
           />
-          <small class="tip">已將停頓節奏減半！兩個空格停頓 {{ speechSettings.pausePerSpaceMs * 2 }} ms，行間呼吸停頓 {{ Math.round(speechSettings.pausePerSpaceMs * 0.5) }} ms，可依需求調至極短！</small>
+          <small class="tip">兩個空格將自動停頓 {{ speechSettings.pausePerSpaceMs * 2 }} ms，幫助孩子抓準歌唱節拍！</small>
+        </div>
+        <div class="form-group">
+          <div class="label-with-val">
+            <label>2. 換行停頓時間 (歌詞單行換行)：</label>
+            <span class="badge">{{ speechSettings.pausePerNewlineMs }} ms</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="500"
+            step="10"
+            v-model.number="speechSettings.pausePerNewlineMs"
+            class="range-slider"
+          />
+          <small class="tip">歌詞每一行結尾處的呼吸換氣時間。</small>
+        </div>
+        <div class="form-group">
+          <div class="label-with-val">
+            <label>3. 換段停頓時間 (接續播放時的段落間隔)：</label>
+            <span class="badge">{{ speechSettings.pausePerParagraphMs }} ms</span>
+          </div>
+          <input
+            type="range"
+            min="100"
+            max="1500"
+            step="50"
+            v-model.number="speechSettings.pausePerParagraphMs"
+            class="range-slider"
+          />
+          <small class="tip">連續播放時，整段念完與下一段開始前的準備時間。</small>
         </div>
       </div>
     </div>
@@ -609,6 +767,12 @@ async function playAllSequentially() {
                 {{ showPlayer ? '收起影片' : '展開影片' }}
               </button>
 
+              <!-- 雲端分享代碼 (Firebase 6碼) -->
+              <button class="btn btn-outline-cloud" @click="showShareModal = true" title="產生 6 碼雲端分享代碼">
+                <span class="material-symbols-outlined btn-icon-inline">cloud_upload</span>
+                雲端分享
+              </button>
+
               <!-- 匯出歌曲檔案 (.HanaSong) -->
               <button class="btn btn-outline" @click="exportCurrentSong" title="匯出這首歌為 .HanaSong 檔案">
                 <span class="material-symbols-outlined btn-icon-inline">file_download</span>
@@ -674,8 +838,13 @@ async function playAllSequentially() {
               <span class="pulse-dot"></span>
               正在朗讀第 <strong>{{ activeParagraphIndex + 1 }}</strong> 段
             </div>
-            <div class="play-status-tip" v-else-if="lastPlayedParagraphIndex !== null">
-              已播完第 <strong>{{ lastPlayedParagraphIndex + 1 }}</strong> 段 (下次將接續播第 {{ lastPlayedParagraphIndex + 2 > lyricParagraphs.length ? 1 : lastPlayedParagraphIndex + 2 }} 段)
+            <div class="play-status-tip" v-else-if="lastAttemptedParagraphIndex !== null">
+              <span v-if="lastCompletedParagraphIndex === lastAttemptedParagraphIndex">
+                已播完第 <strong>{{ lastCompletedParagraphIndex + 1 }}</strong> 段 (下次將接續播第 {{ lastCompletedParagraphIndex + 2 > lyricParagraphs.length ? 1 : lastCompletedParagraphIndex + 2 }} 段)
+              </span>
+              <span v-else>
+                第 <strong>{{ lastAttemptedParagraphIndex + 1 }}</strong> 段尚未念完 (下次按下將重播此段)
+              </span>
             </div>
           </div>
         </div>
@@ -728,7 +897,7 @@ async function playAllSequentially() {
               'paragraph-card',
               {
                 'is-active': activeParagraphIndex === pIdx,
-                'is-last-played': lastPlayedParagraphIndex === pIdx && activeParagraphIndex !== pIdx
+                'is-last-played': lastAttemptedParagraphIndex === pIdx && activeParagraphIndex !== pIdx
               }
             ]"
           >
@@ -761,8 +930,9 @@ async function playAllSequentially() {
                 </span>
                 正在朗讀中...
               </div>
-              <div class="paragraph-indicator last-mark" v-else-if="lastPlayedParagraphIndex === pIdx">
-                📌 上次播放完畢的段落
+              <div class="paragraph-indicator last-mark" v-else-if="lastAttemptedParagraphIndex === pIdx">
+                <span v-if="lastCompletedParagraphIndex === pIdx">📌 已完整播放完畢</span>
+                <span v-else>⏸️ 播放中斷於此段 (重播點)</span>
               </div>
             </div>
           </div>
@@ -861,6 +1031,27 @@ async function playAllSequentially() {
         </div>
       </div>
     </div>
+
+    <!-- 批次匯出歌曲彈窗 (Modal) -->
+    <BatchExportModal
+      :show="showBatchExport"
+      :songs="songs"
+      @close="showBatchExport = false"
+    />
+
+    <!-- 雲端分享彈窗 (Firebase 產生6碼) -->
+    <ShareSongModal
+      :show="showShareModal"
+      :song="currentSong"
+      @close="showShareModal = false"
+    />
+
+    <!-- 雲端取歌彈窗 (Firebase 輸入6碼) -->
+    <FetchSongModal
+      :show="showFetchModal"
+      @import-success="handleCloudImportSuccess"
+      @close="showFetchModal = false"
+    />
 
     <!-- Google Material Icons 挑選開窗元件 -->
     <IconPickerModal
@@ -990,6 +1181,16 @@ async function playAllSequentially() {
   background: #fecaca;
 }
 
+.btn-outline-cloud {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #15803d;
+}
+.btn-outline-cloud:hover {
+  background: #dcfce7;
+  color: #166534;
+}
+
 .btn-ghost {
   background: transparent;
   color: #64748b;
@@ -1033,6 +1234,24 @@ async function playAllSequentially() {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1rem;
+}
+.settings-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.saved-badge {
+  font-size: 0.85rem;
+  color: #059669;
+  background: #d1fae5;
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--radius-full);
+  font-weight: 700;
+  animation: fade-in 0.2s ease-out;
+}
+.btn-sm {
+  padding: 0.4rem 0.9rem;
+  font-size: 0.85rem;
 }
 .drawer-title {
   display: flex;
