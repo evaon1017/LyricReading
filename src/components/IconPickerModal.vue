@@ -35,6 +35,11 @@ function selectIcon(icon: IconOption) {
   emit('update:modelValue', icon.name);
   emit('close');
 }
+
+function clearIcon() {
+  emit('update:modelValue', '');
+  emit('close');
+}
 </script>
 
 <template>
@@ -90,6 +95,10 @@ function selectIcon(icon: IconOption) {
       </div>
 
       <div class="icon-modal-footer">
+        <button v-if="modelValue" type="button" class="btn-clear" @click="clearIcon">
+          <span class="material-symbols-outlined">clear</span>
+          不使用圖示 (改用 YouTube 縮圖)
+        </button>
         <button class="btn-cancel" @click="emit('close')">取消</button>
       </div>
     </div>
@@ -271,8 +280,33 @@ function selectIcon(icon: IconOption) {
   padding: 0.85rem 1.5rem;
   border-top: 1px solid #e2e8f0;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   background: #f8fafc;
+}
+
+.btn-clear {
+  padding: 0.45rem 1rem;
+  border-radius: 9999px;
+  border: 1px solid #fca5a5;
+  background: #fef2f2;
+  color: #dc2626;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: all 0.15s;
+}
+
+.btn-clear:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+.btn-clear .material-symbols-outlined {
+  font-size: 1.1rem;
 }
 
 .btn-cancel {

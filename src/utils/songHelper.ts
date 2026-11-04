@@ -139,6 +139,14 @@ export function extractYouTubeId(url: string): string | null {
 }
 
 /**
+ * 取得 YouTube 影片縮圖 URL (hqdefault)
+ */
+export function getYouTubeThumbnailUrl(url: string): string | null {
+  const videoId = extractYouTubeId(url);
+  return videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : null;
+}
+
+/**
  * 呼叫 YouTube oEmbed API 抓取影片標題
  */
 export async function fetchYouTubeTitle(url: string): Promise<string> {

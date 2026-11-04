@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import type { Song, SpeechSettings } from './types';
-import { loadSongs, saveSongs, extractYouTubeId, fetchYouTubeTitle } from './utils/songHelper';
+import { loadSongs, saveSongs, extractYouTubeId, fetchYouTubeTitle, getYouTubeThumbnailUrl } from './utils/songHelper';
 import { LyricSpeaker } from './utils/speechHelper';
-import { DEFAULT_SONG_ICON } from './utils/iconHelper';
 import IconPickerModal from './components/IconPickerModal.vue';
 import BatchExportModal from './components/BatchExportModal.vue';
-import ShareSongModal from './components/ShareSongModal.vue';
 import FetchSongModal from './components/FetchSongModal.vue';
 import type { SharedData } from './utils/firebaseService';
 
@@ -18,8 +16,8 @@ const currentSongId = ref<string>('');
 const isEditing = ref<boolean>(false);
 const showAddModal = ref<boolean>(false);
 const showBatchExport = ref<boolean>(false);
-const showShareModal = ref<boolean>(false);
 const showFetchModal = ref<boolean>(false);
+const showActionMenu = ref<boolean>(false);
 const showPlayer = ref<boolean>(false);
 const showSettings = ref<boolean>(false);
 
@@ -83,13 +81,13 @@ const lastCompletedParagraphIndex = ref<number | null>(null); // 真正完整朗
 const editTitle = ref<string>('');
 const editYoutubeUrl = ref<string>('');
 const editLyrics = ref<string>('');
-const editIcon = ref<string>(DEFAULT_SONG_ICON);
+const editIcon = ref<string>('');
 
 // 新增歌曲的表單資料
 const newUrl = ref<string>('');
 const newTitle = ref<string>('');
 const newLyrics = ref<string>('');
-const newIcon = ref<string>(DEFAULT_SONG_ICON);
+const newIcon = ref<string>('');
 const isFetchingTitle = ref<boolean>(false);
 const fetchError = ref<string>('');
 
@@ -122,7 +120,19 @@ onMounted(() => {
     currentSongId.value = songs.value[0].id;
   }
   initVoices();
+  window.addEventListener('click', onWindowClick);
 });
+
+onUnmounted(() => {
+  window.removeEventListener('click', onWindowClick);
+});
+
+function onWindowClick(e: MouseEvent) {
+  const target = e.target as HTMLElement | null;
+  if (!target || !target.closest('.action-dropdown')) {
+    showActionMenu.value = false;
+  }
+}
 
 // 監聽語音清單變更
 function initVoices() {
@@ -153,6 +163,7 @@ function selectSong(id: string) {
   }
   currentSongId.value = id;
   isEditing.value = false;
+  showActionMenu.value = false;
   activeParagraphIndex.value = null;
   lastAttemptedParagraphIndex.value = null;
   lastCompletedParagraphIndex.value = null;
@@ -206,7 +217,7 @@ function handleAddSong() {
     title: newTitle.value.trim(),
     youtubeUrl: newUrl.value.trim(),
     lyrics: newLyrics.value.trim(),
-    icon: newIcon.value || DEFAULT_SONG_ICON,
+    icon: newIcon.value.trim() || undefined,
     createdAt: Date.now()
   };
 
@@ -218,7 +229,7 @@ function handleAddSong() {
   newUrl.value = '';
   newTitle.value = '';
   newLyrics.value = '';
-  newIcon.value = DEFAULT_SONG_ICON;
+  newIcon.value = '';
   fetchError.value = '';
   showAddModal.value = false;
   isEditing.value = false;
@@ -230,8 +241,9 @@ function startEditing() {
   editTitle.value = currentSong.value.title;
   editYoutubeUrl.value = currentSong.value.youtubeUrl;
   editLyrics.value = currentSong.value.lyrics;
-  editIcon.value = currentSong.value.icon || DEFAULT_SONG_ICON;
+  editIcon.value = currentSong.value.icon || '';
   isEditing.value = true;
+  showActionMenu.value = false;
 }
 
 // 儲存編輯
@@ -240,7 +252,7 @@ function saveEditing() {
   currentSong.value.title = editTitle.value.trim() || '未命名歌曲';
   currentSong.value.youtubeUrl = editYoutubeUrl.value.trim();
   currentSong.value.lyrics = editLyrics.value.trim();
-  currentSong.value.icon = editIcon.value || DEFAULT_SONG_ICON;
+  currentSong.value.icon = editIcon.value.trim() || undefined;
   saveSongs(songs.value);
   isEditing.value = false;
 }
@@ -250,108 +262,15 @@ function cancelEditing() {
   isEditing.value = false;
 }
 
-// 匯出單一歌曲為 .HanaSong (JSON 格式)
-function exportCurrentSong() {
-  if (!currentSong.value) return;
-  const songData = {
-    format: 'HanaSong',
-    version: '1.0',
-    exportedAt: new Date().toISOString(),
-    song: currentSong.value
-  };
-
-  const jsonStr = JSON.stringify(songData, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  
-  // 清理檔案名稱中的非法字元
-  const safeTitle = currentSong.value.title.replace(/[\\/:*?"<>|]/g, '_');
-  a.href = url;
-  a.download = `${safeTitle}.HanaSong`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+// 下拉選單點擊動作
+function handleDropdownEdit() {
+  showActionMenu.value = false;
+  startEditing();
 }
 
-// 隱藏的檔案上傳 input
-const fileInputRef = ref<HTMLInputElement | null>(null);
-
-function triggerImport() {
-  if (fileInputRef.value) {
-    fileInputRef.value.value = '';
-    fileInputRef.value.click();
-  }
-}
-
-// 處理匯入歌曲 (支援單曲 .HanaSong 或 批次 .HanaSongs)
-function handleFileImport(event: Event) {
-  const target = event.target as HTMLInputElement;
-  const file = target.files?.[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    try {
-      const content = e.target?.result as string;
-      const parsed = JSON.parse(content);
-
-      // 情況 1: 批次匯入 (.HanaSongs)
-      if (parsed.format === 'HanaSongs' && Array.isArray(parsed.songs)) {
-        const incomingSongs: Song[] = parsed.songs.map((s: any) => ({
-          id: 'song-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-          title: s.title || '未命名歌曲',
-          youtubeUrl: s.youtubeUrl || '',
-          lyrics: s.lyrics || '',
-          icon: s.icon || DEFAULT_SONG_ICON,
-          createdAt: Date.now()
-        }));
-
-        if (incomingSongs.length === 0) {
-          alert('該批次檔案內未包含任何歌曲！');
-          return;
-        }
-
-        songs.value.unshift(...incomingSongs);
-        saveSongs(songs.value);
-        currentSongId.value = incomingSongs[0].id;
-        alert(`🎉 成功批次匯入 ${incomingSongs.length} 首歌曲！`);
-        return;
-      }
-
-      // 情況 2: 單曲匯入 (.HanaSong)
-      let importedSong: Partial<Song> | null = null;
-      if (parsed.song && typeof parsed.song === 'object') {
-        importedSong = parsed.song;
-      } else if (parsed.title && parsed.lyrics) {
-        importedSong = parsed;
-      }
-
-      if (!importedSong || !importedSong.title || !importedSong.lyrics) {
-        alert('匯入失敗：檔案格式不符合 .HanaSong 或 .HanaSongs 格式！');
-        return;
-      }
-
-      const newSong: Song = {
-        id: 'song-' + Date.now(),
-        title: importedSong.title,
-        youtubeUrl: importedSong.youtubeUrl || '',
-        lyrics: importedSong.lyrics,
-        icon: importedSong.icon || DEFAULT_SONG_ICON,
-        createdAt: Date.now()
-      };
-
-      songs.value.unshift(newSong);
-      saveSongs(songs.value);
-      currentSongId.value = newSong.id;
-      alert(`🎉 成功匯入歌曲《${newSong.title}》！`);
-    } catch (err: any) {
-      console.error('Import error:', err);
-      alert('解析檔案失敗，請確認是否為有效的 .HanaSong 或 .HanaSongs 檔案');
-    }
-  };
-  reader.readAsText(file);
+function handleDropdownDelete() {
+  showActionMenu.value = false;
+  deleteCurrentSong();
 }
 
 // 處理雲端代碼取歌成功 (Firebase SharedData)
@@ -362,7 +281,7 @@ function handleCloudImportSuccess(data: SharedData) {
       title: s.title || '未命名歌曲',
       youtubeUrl: s.youtubeUrl || '',
       lyrics: s.lyrics || '',
-      icon: s.icon || DEFAULT_SONG_ICON,
+      icon: s.icon || undefined,
       createdAt: Date.now()
     }));
     songs.value.unshift(...incomingSongs);
@@ -376,7 +295,7 @@ function handleCloudImportSuccess(data: SharedData) {
       title: s.title,
       youtubeUrl: s.youtubeUrl || '',
       lyrics: s.lyrics,
-      icon: s.icon || DEFAULT_SONG_ICON,
+      icon: s.icon || undefined,
       createdAt: Date.now()
     };
     songs.value.unshift(newSong);
@@ -563,30 +482,17 @@ async function playAllSequentially() {
         </div>
       </div>
       <div class="header-actions">
-        <!-- 隱藏的檔案選擇器 (支援 .HanaSong, .HanaSongs, .json) -->
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept=".HanaSong,.HanaSongs,.json"
-          style="display: none"
-          @change="handleFileImport"
-        />
-
         <button class="btn btn-secondary" @click="showSettings = !showSettings" title="朗讀語音設定">
           <span class="material-symbols-outlined btn-icon-inline">tune</span>
           語音設定
         </button>
-        <button class="btn btn-secondary" @click="showFetchModal = true" title="輸入 6 碼代碼從雲端同步歌曲">
+        <button class="btn btn-secondary" @click="showBatchExport = true" title="勾選多首歌曲批次匯出至雲端">
+          <span class="material-symbols-outlined btn-icon-inline">cloud_upload</span>
+          匯出
+        </button>
+        <button class="btn btn-secondary" @click="showFetchModal = true" title="輸入 6 碼代碼從雲端匯入歌曲">
           <span class="material-symbols-outlined btn-icon-inline">cloud_download</span>
-          雲端取歌
-        </button>
-        <button class="btn btn-secondary" @click="showBatchExport = true" title="勾選多首歌曲批次匯出">
-          <span class="material-symbols-outlined btn-icon-inline">archive</span>
-          批次匯出
-        </button>
-        <button class="btn btn-secondary" @click="triggerImport" title="匯入 .HanaSong 或 .HanaSongs 檔案">
-          <span class="material-symbols-outlined btn-icon-inline">file_upload</span>
-          匯入歌曲
+          匯入
         </button>
         <button class="btn btn-primary" @click="showAddModal = true">
           <span class="material-symbols-outlined btn-icon-inline">add_circle</span>
@@ -715,10 +621,20 @@ async function playAllSequentially() {
             <!-- 拖曳把手提示 -->
             <span class="material-symbols-outlined drag-handle" title="按住可拖曳排序">drag_indicator</span>
 
-            <!-- 自訂 Google Material Icon -->
-            <div class="song-item-icon-box">
-              <span class="material-symbols-outlined song-icon">
-                {{ song.icon || DEFAULT_SONG_ICON }}
+            <!-- 歌曲圖示或 YouTube 縮圖 -->
+            <div
+              class="song-item-icon-box"
+              :class="{ 'is-thumb': !song.icon && getYouTubeThumbnailUrl(song.youtubeUrl) }"
+            >
+              <img
+                v-if="!song.icon && getYouTubeThumbnailUrl(song.youtubeUrl)"
+                :src="getYouTubeThumbnailUrl(song.youtubeUrl)!"
+                class="song-item-thumb"
+                alt=""
+                loading="lazy"
+              />
+              <span v-else class="material-symbols-outlined song-icon">
+                {{ song.icon || 'music_note' }}
               </span>
             </div>
 
@@ -741,9 +657,20 @@ async function playAllSequentially() {
         <div class="song-header-card">
           <div class="song-title-row">
             <div class="song-identity">
-              <span class="material-symbols-outlined current-song-icon">
-                {{ currentSong.icon || DEFAULT_SONG_ICON }}
-              </span>
+              <div
+                class="current-song-icon-box"
+                :class="{ 'has-thumb': !currentSong.icon && getYouTubeThumbnailUrl(currentSong.youtubeUrl) }"
+              >
+                <img
+                  v-if="!currentSong.icon && getYouTubeThumbnailUrl(currentSong.youtubeUrl)"
+                  :src="getYouTubeThumbnailUrl(currentSong.youtubeUrl)!"
+                  class="current-song-thumb-img"
+                  alt=""
+                />
+                <span v-else class="material-symbols-outlined current-song-icon">
+                  {{ currentSong.icon || 'music_note' }}
+                </span>
+              </div>
               <div>
                 <h2 class="current-title">{{ currentSong.title }}</h2>
                 <div class="current-url" v-if="currentSong.youtubeUrl">
@@ -757,7 +684,7 @@ async function playAllSequentially() {
 
             <!-- 操作按鈕群 -->
             <div class="song-action-buttons">
-              <!-- 顯示 YouTube 影片播放器 -->
+              <!-- 顯示 YouTube 影片播放器 (小孩可直接操作) -->
               <button
                 v-if="currentEmbedUrl"
                 class="btn btn-outline-yt"
@@ -767,24 +694,8 @@ async function playAllSequentially() {
                 {{ showPlayer ? '收起影片' : '展開影片' }}
               </button>
 
-              <!-- 雲端分享代碼 (Firebase 6碼) -->
-              <button class="btn btn-outline-cloud" @click="showShareModal = true" title="產生 6 碼雲端分享代碼">
-                <span class="material-symbols-outlined btn-icon-inline">cloud_upload</span>
-                雲端分享
-              </button>
-
-              <!-- 匯出歌曲檔案 (.HanaSong) -->
-              <button class="btn btn-outline" @click="exportCurrentSong" title="匯出這首歌為 .HanaSong 檔案">
-                <span class="material-symbols-outlined btn-icon-inline">file_download</span>
-                匯出歌曲
-              </button>
-
-              <!-- 編輯 / 儲存按鈕 -->
-              <button v-if="!isEditing" class="btn btn-outline" @click="startEditing">
-                <span class="material-symbols-outlined btn-icon-inline">edit</span>
-                編輯歌詞
-              </button>
-              <template v-else>
+              <!-- 編輯中時顯示儲存與取消 -->
+              <template v-if="isEditing">
                 <button class="btn btn-primary" @click="saveEditing">
                   <span class="material-symbols-outlined btn-icon-inline">save</span>
                   儲存修改
@@ -794,15 +705,29 @@ async function playAllSequentially() {
                 </button>
               </template>
 
-              <!-- 刪除按鈕 (有確認 confirm) -->
-              <button
-                class="btn btn-danger-action"
-                @click="deleteCurrentSong"
-                title="刪除此首歌曲"
-              >
-                <span class="material-symbols-outlined btn-icon-inline">delete</span>
-                刪除歌曲
-              </button>
+              <!-- 非編輯時：大人管理功能收合進摺疊選單，防止小孩誤按 -->
+              <div v-else class="action-dropdown">
+                <button
+                  class="btn btn-outline btn-menu-toggle"
+                  @click.stop="showActionMenu = !showActionMenu"
+                  title="更多歌曲管理選項"
+                >
+                  <span class="material-symbols-outlined btn-icon-inline">more_vert</span>
+                  <span>管理</span>
+                </button>
+
+                <div v-if="showActionMenu" class="dropdown-menu" @click.stop>
+                  <button class="dropdown-item" @click="handleDropdownEdit">
+                    <span class="material-symbols-outlined dropdown-icon">edit</span>
+                    <span>編輯歌詞與設定</span>
+                  </button>
+                  <div class="dropdown-divider"></div>
+                  <button class="dropdown-item text-danger" @click="handleDropdownDelete">
+                    <span class="material-symbols-outlined dropdown-icon">delete</span>
+                    <span>刪除此首歌曲</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -855,18 +780,37 @@ async function playAllSequentially() {
             💡 <strong>小提示：</strong>段落之間請用「<strong>兩個換行</strong>」分開。歌詞中按「<strong>空白鍵</strong>」可在朗讀時自動產生停頓拍子！
           </div>
 
-          <!-- 圖示設定 -->
+          <!-- 圖示設定 (選填/次要) -->
           <div class="form-group">
-            <label>歌曲圖示 (Google Material Icon)：</label>
+            <label>歌曲專屬圖示 (選填，未設定時自動使用 YouTube 縮圖)：</label>
             <div class="icon-selector-field">
               <div class="selected-icon-preview">
-                <span class="material-symbols-outlined">{{ editIcon }}</span>
+                <span v-if="editIcon" class="material-symbols-outlined">{{ editIcon }}</span>
+                <img
+                  v-else-if="getYouTubeThumbnailUrl(editYoutubeUrl)"
+                  :src="getYouTubeThumbnailUrl(editYoutubeUrl)!"
+                  class="preview-thumb-img"
+                  alt="YouTube 縮圖"
+                />
+                <span v-else class="material-symbols-outlined placeholder-icon">smart_display</span>
               </div>
-              <button type="button" class="btn btn-secondary" @click="openIconPicker('edit')">
-                <span class="material-symbols-outlined btn-icon-inline">image_search</span>
-                更換圖示
-              </button>
+              <div class="icon-field-actions">
+                <button type="button" class="btn btn-secondary" @click="openIconPicker('edit')">
+                  <span class="material-symbols-outlined btn-icon-inline">image_search</span>
+                  {{ editIcon ? '更換圖示' : '挑選圖示 (次要)' }}
+                </button>
+                <button
+                  v-if="editIcon"
+                  type="button"
+                  class="btn btn-ghost text-danger"
+                  @click="editIcon = ''"
+                >
+                  <span class="material-symbols-outlined btn-icon-inline">clear</span>
+                  清除圖示 (改用 YouTube 縮圖)
+                </button>
+              </div>
             </div>
+            <small class="tip">預設自動採用 YouTube 縮圖，若縮圖難以辨認歌曲時再挑選圖示即可。</small>
           </div>
 
           <div class="form-group">
@@ -963,21 +907,6 @@ async function playAllSequentially() {
           <button class="btn-icon" @click="showAddModal = false">✕</button>
         </div>
         <div class="modal-body">
-          <!-- 圖示設定 (必選，提供預設值) -->
-          <div class="form-group">
-            <label>歌曲專屬圖示 (Google Material Icon)：</label>
-            <div class="icon-selector-field">
-              <div class="selected-icon-preview">
-                <span class="material-symbols-outlined">{{ newIcon }}</span>
-              </div>
-              <button type="button" class="btn btn-secondary" @click="openIconPicker('add')">
-                <span class="material-symbols-outlined btn-icon-inline">image_search</span>
-                挑選圖示
-              </button>
-            </div>
-            <small class="tip">預設為音樂圖示，可點擊更換可愛動物、星星或玩具等標誌！</small>
-          </div>
-
           <div class="form-group">
             <label>YouTube 影片網址：</label>
             <div class="input-with-button">
@@ -998,7 +927,40 @@ async function playAllSequentially() {
               </button>
             </div>
             <small v-if="fetchError" class="error-tip">{{ fetchError }}</small>
-            <small v-else class="tip">貼入網址後點擊或移開，將自動抓取 YouTube 影片標題！</small>
+            <small v-else class="tip">貼入網址後點擊或移開，將自動抓取 YouTube 影片標題與縮圖！</small>
+          </div>
+
+          <!-- 圖示設定 (選填/次要) -->
+          <div class="form-group">
+            <label>歌曲專屬圖示 (選填，未設定時自動使用 YouTube 縮圖)：</label>
+            <div class="icon-selector-field">
+              <div class="selected-icon-preview">
+                <span v-if="newIcon" class="material-symbols-outlined">{{ newIcon }}</span>
+                <img
+                  v-else-if="getYouTubeThumbnailUrl(newUrl)"
+                  :src="getYouTubeThumbnailUrl(newUrl)!"
+                  class="preview-thumb-img"
+                  alt="YouTube 縮圖"
+                />
+                <span v-else class="material-symbols-outlined placeholder-icon">smart_display</span>
+              </div>
+              <div class="icon-field-actions">
+                <button type="button" class="btn btn-secondary" @click="openIconPicker('add')">
+                  <span class="material-symbols-outlined btn-icon-inline">image_search</span>
+                  {{ newIcon ? '更換圖示' : '挑選圖示 (次要)' }}
+                </button>
+                <button
+                  v-if="newIcon"
+                  type="button"
+                  class="btn btn-ghost text-danger"
+                  @click="newIcon = ''"
+                >
+                  <span class="material-symbols-outlined btn-icon-inline">clear</span>
+                  清除 (使用 YouTube 縮圖)
+                </button>
+              </div>
+            </div>
+            <small class="tip">預設自動使用 YouTube 縮圖；若縮圖難以辨識，可自訂挑選可愛圖示。</small>
           </div>
 
           <div class="form-group">
@@ -1037,13 +999,6 @@ async function playAllSequentially() {
       :show="showBatchExport"
       :songs="songs"
       @close="showBatchExport = false"
-    />
-
-    <!-- 雲端分享彈窗 (Firebase 產生6碼) -->
-    <ShareSongModal
-      :show="showShareModal"
-      :song="currentSong"
-      @close="showShareModal = false"
     />
 
     <!-- 雲端取歌彈窗 (Firebase 輸入6碼) -->
@@ -1381,14 +1336,26 @@ async function playAllSequentially() {
 }
 
 .song-item-icon-box {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 8px;
   background: #eef2ff;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+}
+.song-item-icon-box.is-thumb {
+  background: #0f172a;
+  border-color: #cbd5e1;
+}
+.song-item-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .song-icon {
   font-size: 1.35rem;
@@ -1460,14 +1427,32 @@ async function playAllSequentially() {
   min-width: 250px;
 }
 
-.current-song-icon {
-  font-size: 2.5rem;
-  color: #4f46e5;
-  background: #eef2ff;
+.current-song-icon-box {
+  width: 56px;
+  height: 56px;
   border-radius: 12px;
-  padding: 0.5rem;
-  box-shadow: var(--shadow-sm);
+  background: #eef2ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid #e2e8f0;
+}
+.current-song-icon-box.has-thumb {
+  background: #0f172a;
+}
+.current-song-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.current-song-icon {
+  font-size: 2.2rem;
+  color: #4f46e5;
 }
 
 .current-title {
@@ -1495,6 +1480,65 @@ async function playAllSequentially() {
   gap: 0.5rem;
   align-items: center;
   flex-wrap: wrap;
+}
+
+/* 更多操作摺疊下拉選單 */
+.action-dropdown {
+  position: relative;
+}
+.btn-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  min-width: 180px;
+  padding: 0.4rem;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  animation: fade-in 0.15s ease-out;
+}
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.65rem 0.9rem;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+.dropdown-item:hover {
+  background: #f1f5f9;
+}
+.dropdown-item.text-danger {
+  color: #dc2626;
+}
+.dropdown-item.text-danger:hover {
+  background: #fee2e2;
+}
+.dropdown-icon {
+  font-size: 1.2rem;
+}
+.dropdown-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 0.25rem 0;
 }
 
 /* YouTube 嵌入播放器 */
@@ -1734,18 +1778,36 @@ async function playAllSequentially() {
   gap: 1rem;
 }
 .selected-icon-preview {
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   border-radius: 12px;
-  background: #eef2ff;
-  border: 1px solid #c7d2fe;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #4f46e5;
+  overflow: hidden;
+  flex-shrink: 0;
 }
 .selected-icon-preview .material-symbols-outlined {
   font-size: 1.8rem;
+}
+.selected-icon-preview .placeholder-icon {
+  font-size: 1.8rem;
+  color: #94a3b8;
+}
+.preview-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.icon-field-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .tip {

@@ -43,14 +43,14 @@ async function handleFetch() {
       <div class="modal-header">
         <div class="title-wrap">
           <span class="material-symbols-outlined header-icon">cloud_download</span>
-          <h3>雲端取歌 (輸入代碼)</h3>
+          <h3>雲端匯入歌曲</h3>
         </div>
         <button class="btn-icon" @click="emit('close')">✕</button>
       </div>
 
       <div class="modal-body">
         <p class="description">
-          請輸入對方分享給您的 <strong>6 碼英數代碼</strong>（不分大小寫），系統將直接從雲端下載歌曲與歌詞：
+          請輸入對方分享給您的 <strong>6 碼英數代碼</strong>（不分大小寫），系統將直接從雲端下載並匯入歌曲與歌詞：
         </p>
 
         <div class="input-wrap">
@@ -77,7 +77,7 @@ async function handleFetch() {
           @click="handleFetch"
         >
           <span class="material-symbols-outlined btn-icon-inline">download</span>
-          {{ isLoading ? '正在查詢下載...' : '立即下載匯入' }}
+          {{ isLoading ? '正在查詢並匯入...' : '立即匯入' }}
         </button>
       </div>
     </div>
@@ -126,6 +126,18 @@ async function handleFetch() {
   font-weight: 700;
   color: #0f172a;
 }
+.btn-icon {
+  background: transparent;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: #64748b;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+}
+.btn-icon:hover {
+  background: #f1f5f9;
+}
 .modal-body {
   padding: 1.5rem;
   display: flex;
@@ -133,9 +145,10 @@ async function handleFetch() {
   gap: 1rem;
 }
 .description {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   color: #475569;
-  line-height: 1.6;
+  line-height: 1.5;
+  margin: 0;
 }
 .input-wrap {
   display: flex;
@@ -144,33 +157,34 @@ async function handleFetch() {
 }
 .code-input {
   width: 100%;
-  text-align: center;
-  font-size: 2rem;
+  font-size: 1.8rem;
   font-weight: 800;
   letter-spacing: 0.25em;
+  text-align: center;
+  text-transform: uppercase;
   padding: 0.75rem 1rem;
   border: 2px solid #cbd5e1;
   border-radius: 12px;
+  color: #4f46e5;
+  background: #f8fafc;
   outline: none;
-  font-family: monospace;
-  text-transform: uppercase;
-  color: #1e1b4b;
   transition: all 0.2s;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
 }
 .code-input:focus {
   border-color: #6366f1;
+  background: white;
   box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
 }
 .error-tip {
-  color: #ef4444;
-  font-size: 0.85rem;
   background: #fef2f2;
-  padding: 0.6rem 0.8rem;
+  color: #dc2626;
+  padding: 0.6rem 0.85rem;
   border-radius: 8px;
-  border: 1px solid #fecaca;
+  font-size: 0.85rem;
 }
 .modal-footer {
-  padding: 0.85rem 1.5rem;
+  padding: 1rem 1.5rem;
   border-top: 1px solid #e2e8f0;
   display: flex;
   justify-content: flex-end;
@@ -178,32 +192,38 @@ async function handleFetch() {
   background: #f8fafc;
 }
 .btn {
-  padding: 0.6rem 1.2rem;
+  padding: 0.55rem 1.2rem;
   border-radius: 9999px;
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid transparent;
+  transition: all 0.2s;
 }
 .btn-primary {
-  background: #6366f1;
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
   color: white;
+  border: none;
 }
 .btn-primary:hover:not(:disabled) {
-  background: #4f46e5;
+  background: linear-gradient(135deg, #4f46e5, #4338ca);
 }
 .btn-primary:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 .btn-ghost {
   background: transparent;
   color: #64748b;
 }
-.btn-icon {
-  background: transparent;
-  border: none;
-  font-size: 1.2rem;
-  color: #64748b;
-  cursor: pointer;
+.btn-ghost:hover {
+  background: #e2e8f0;
+}
+.btn-icon-inline {
+  font-size: 1.15rem;
+  vertical-align: middle;
 }
 </style>
