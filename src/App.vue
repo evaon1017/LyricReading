@@ -273,35 +273,111 @@ function handleDropdownDelete() {
   deleteCurrentSong();
 }
 
+// 比對兩首歌是否所有內容欄位完全相同 (title, lyrics, icon, youtubeUrl)
+function isSongIdentical(
+  a: { title: string; lyrics: string; icon?: string; youtubeUrl?: string },
+  b: { title: string; lyrics: string; icon?: string; youtubeUrl?: string }
+): boolean {
+  return (
+    a.title.trim() === b.title.trim() &&
+    a.lyrics.trim() === b.lyrics.trim() &&
+    (a.icon?.trim() || '') === (b.icon?.trim() || '') &&
+    (a.youtubeUrl?.trim() || '') === (b.youtubeUrl?.trim() || '')
+  );
+}
+
+// 處理重複標題，自動遞增 -1, -2, -3 流水號
+function getUniqueTitle(rawTitle: string, existingTitles: Set<string>): string {
+  const title = rawTitle.trim() || '未命名歌曲';
+  if (!existingTitles.has(title)) {
+    existingTitles.add(title);
+    return title;
+  }
+
+  // 檢查是否已帶有 -數字 結尾，例如 "兩隻老虎-1"
+  const match = title.match(/^(.*?)-(\d+)$/);
+  const base = match ? match[1] : title;
+  let counter = match ? parseInt(match[2], 10) + 1 : 1;
+
+  while (existingTitles.has(`${base}-${counter}`)) {
+    counter++;
+  }
+
+  const unique = `${base}-${counter}`;
+  existingTitles.add(unique);
+  return unique;
+}
+
 // 處理雲端代碼取歌成功 (Firebase SharedData)
 function handleCloudImportSuccess(data: SharedData) {
+  const incomingList: Song[] = [];
+
   if (data.format === 'HanaSongs' && Array.isArray(data.songs)) {
-    const incomingSongs: Song[] = data.songs.map((s) => ({
-      id: 'song-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-      title: s.title || '未命名歌曲',
-      youtubeUrl: s.youtubeUrl || '',
-      lyrics: s.lyrics || '',
-      icon: s.icon || undefined,
-      createdAt: Date.now()
-    }));
-    songs.value.unshift(...incomingSongs);
-    saveSongs(songs.value);
-    currentSongId.value = incomingSongs[0].id;
-    alert(`🎉 成功從雲端同步匯入 ${incomingSongs.length} 首歌曲！`);
+    incomingList.push(...data.songs);
   } else if (data.song) {
-    const s = data.song;
+    incomingList.push(data.song);
+  }
+
+  if (incomingList.length === 0) {
+    alert('⚠️ 該分享代碼內未包含任何歌曲！');
+    return;
+  }
+
+  // 用於唯一標題檢查的集合 (預先納入目前歌單的所有標題)
+  const existingTitles = new Set<string>(songs.value.map((s) => s.title.trim()));
+  const acceptedSongs: Song[] = [];
+  let skippedCount = 0;
+
+  for (const raw of incomingList) {
+    const candidate = {
+      title: (raw.title || '未命名歌曲').trim(),
+      youtubeUrl: (raw.youtubeUrl || '').trim(),
+      lyrics: (raw.lyrics || '').trim(),
+      icon: (raw.icon || '').trim() || undefined
+    };
+
+    // 檢查是否與既有歌曲（或同批次已接受的歌曲）完全相同 (title, lyrics, icon, youtubeUrl)
+    const isDuplicate =
+      songs.value.some((existing) => isSongIdentical(existing, candidate)) ||
+      acceptedSongs.some((accepted) => isSongIdentical(accepted, candidate));
+
+    if (isDuplicate) {
+      skippedCount++;
+      continue;
+    }
+
+    // 若有任何欄位不同，則當作新歌曲匯入；若 title 重複則自動加上 -1, -2, -3 流水號
+    const uniqueTitle = getUniqueTitle(candidate.title, existingTitles);
+
     const newSong: Song = {
-      id: 'song-' + Date.now(),
-      title: s.title,
-      youtubeUrl: s.youtubeUrl || '',
-      lyrics: s.lyrics,
-      icon: s.icon || undefined,
+      id: 'song-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+      title: uniqueTitle,
+      youtubeUrl: candidate.youtubeUrl,
+      lyrics: candidate.lyrics,
+      icon: candidate.icon,
       createdAt: Date.now()
     };
-    songs.value.unshift(newSong);
+
+    acceptedSongs.push(newSong);
+  }
+
+  if (acceptedSongs.length > 0) {
+    songs.value.unshift(...acceptedSongs);
     saveSongs(songs.value);
-    currentSongId.value = newSong.id;
-    alert(`🎉 成功從雲端匯入歌曲《${newSong.title}》！`);
+    currentSongId.value = acceptedSongs[0].id;
+  }
+
+  // 依據匯入與略過結果給予友善提示
+  if (acceptedSongs.length === 0 && skippedCount > 0) {
+    alert(`ℹ️ 匯入的 ${skippedCount} 首歌曲皆已存在且內容完全相同，已為您自動略過，未重複加入。`);
+  } else if (skippedCount > 0) {
+    alert(`🎉 成功匯入 ${acceptedSongs.length} 首歌曲！（已自動略過 ${skippedCount} 首完全重複的歌曲）`);
+  } else {
+    if (acceptedSongs.length === 1) {
+      alert(`🎉 成功從雲端匯入歌曲《${acceptedSongs[0].title}》！`);
+    } else {
+      alert(`🎉 成功從雲端同步匯入 ${acceptedSongs.length} 首歌曲！`);
+    }
   }
 }
 

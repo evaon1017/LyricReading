@@ -39,6 +39,13 @@ export interface SharedData {
 }
 
 /**
+ * 清除物件中所有值為 undefined 的欄位 (Firestore setDoc 不支援 undefined)
+ */
+function cleanForFirestore<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data));
+}
+
+/**
  * 上傳歌曲至 Firestore 並返回短分享碼
  * @param data 欲分享的單曲或多曲
  * @param expireHours 有效小時數 (預設 24 小時)
@@ -59,8 +66,9 @@ export async function uploadSongShare(
     ...(data.songs ? { songs: data.songs } : {})
   };
 
+  const cleanPayload = cleanForFirestore(payload);
   const docRef = doc(db, COLLECTION_NAME, shareCode);
-  await setDoc(docRef, payload);
+  await setDoc(docRef, cleanPayload);
   return shareCode;
 }
 
