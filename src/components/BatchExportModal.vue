@@ -520,4 +520,28 @@ function resetToSelection() {
   font-size: 1.15rem;
   vertical-align: middle;
 }
+
+@media (max-width: 480px) {
+  .modal-overlay {
+    padding: 0.5rem;
+  }
+  .modal-card {
+    max-height: 90vh;
+    border-radius: 14px;
+  }
+  .modal-header, .modal-body, .modal-footer {
+    padding: 1rem;
+  }
+  .code-display {
+    font-size: 1.8rem;
+    letter-spacing: 0.15em;
+  }
+  .modal-footer {
+    flex-direction: column-reverse;
+  }
+  .modal-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
 </style>

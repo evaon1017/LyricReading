@@ -329,4 +329,28 @@ function clearIcon() {
     transform: scale(1);
   }
 }
+
+@media (max-width: 480px) {
+  .icon-modal-overlay {
+    padding: 0.5rem;
+  }
+  .icon-modal-card {
+    max-height: 90vh;
+    border-radius: 14px;
+  }
+  .icon-modal-header, .icon-filter-bar, .icon-modal-footer {
+    padding: 0.85rem 1rem;
+  }
+  .icon-grid-container {
+    padding: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(75px, 1fr));
+    gap: 0.6rem;
+  }
+  .icon-choice-card {
+    padding: 0.6rem 0.35rem;
+  }
+  .icon-choice-card .icon-display {
+    font-size: 1.8rem;
+  }
+}
 </style>

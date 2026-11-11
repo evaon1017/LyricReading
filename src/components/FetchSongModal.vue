@@ -226,4 +226,28 @@ async function handleFetch() {
   font-size: 1.15rem;
   vertical-align: middle;
 }
+
+@media (max-width: 480px) {
+  .modal-overlay {
+    padding: 0.5rem;
+  }
+  .modal-card {
+    border-radius: 14px;
+  }
+  .modal-header, .modal-body, .modal-footer {
+    padding: 1rem;
+  }
+  .code-input {
+    font-size: 1.4rem;
+    letter-spacing: 0.15em;
+    padding: 0.6rem 0.8rem;
+  }
+  .modal-footer {
+    flex-direction: column-reverse;
+  }
+  .modal-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
 </style>

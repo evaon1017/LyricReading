@@ -10,6 +10,12 @@ import type { SharedData } from './utils/firebaseService';
 
 const SPEECH_SETTINGS_KEY = 'kid_speech_settings';
 
+// 段落可愛圖示列表，依序循環賦予段落童趣視覺標記
+const PARAGRAPH_EMOJIS = ['🌟', '🎈', '🐰', '🌈', '🚀', '🐱', '👑', '🍭', '🌸', '🧸', '🌞', '🎨'];
+function getParagraphEmoji(index: number): string {
+  return PARAGRAPH_EMOJIS[index % PARAGRAPH_EMOJIS.length];
+}
+
 // 狀態管理
 const songs = ref<Song[]>([]);
 const currentSongId = ref<string>('');
@@ -18,8 +24,15 @@ const showAddModal = ref<boolean>(false);
 const showBatchExport = ref<boolean>(false);
 const showFetchModal = ref<boolean>(false);
 const showActionMenu = ref<boolean>(false);
+const showParentMenu = ref<boolean>(false);
+const showSongDrawer = ref<boolean>(false); // 行動裝置專屬：歌庫抽屜
 const showPlayer = ref<boolean>(false);
 const showSettings = ref<boolean>(false);
+const isMobileView = ref<boolean>(typeof window !== 'undefined' ? window.innerWidth <= 1024 : false);
+
+function onWindowResize() {
+  isMobileView.value = window.innerWidth <= 1024;
+}
 
 // 語音設定儲存成功提示
 const showSettingsSaved = ref<boolean>(false);
@@ -73,9 +86,9 @@ const availableVoices = ref<SpeechSynthesisVoice[]>([]);
 const speaker = new LyricSpeaker();
 const isPlaying = ref<boolean>(false);
 const isSequentialPlaying = ref<boolean>(false);
-const activeParagraphIndex = ref<number | null>(null); // 當前正在播放中（進行中）的段落
-const lastAttemptedParagraphIndex = ref<number | null>(null); // 最近一次點擊或嘗試播放的段落 (用於高亮標記)
-const lastCompletedParagraphIndex = ref<number | null>(null); // 真正完整朗讀「念完」的最後段落 (用於接續播放判斷)
+const activeParagraphIndex = ref<number | null>(null); // 當前正在播放中的段落
+const lastAttemptedParagraphIndex = ref<number | null>(null); // 最近一次點擊或嘗試播放的段落
+const lastCompletedParagraphIndex = ref<number | null>(null); // 完整朗讀完畢的最後段落
 
 // 編輯中的暫存資料
 const editTitle = ref<string>('');
@@ -106,7 +119,6 @@ const currentEmbedUrl = computed(() => {
 // 依據「兩個換行符號」將歌詞拆解為段落列表
 const lyricParagraphs = computed(() => {
   if (!currentSong.value || !currentSong.value.lyrics) return [];
-  // 正規表達式匹配連續兩個或更多換行：\r?\n\s*\r?\n
   return currentSong.value.lyrics
     .split(/\r?\n\s*\r?\n/)
     .map((p) => p.trim())
@@ -120,10 +132,13 @@ onMounted(() => {
     currentSongId.value = songs.value[0].id;
   }
   initVoices();
+  onWindowResize();
+  window.addEventListener('resize', onWindowResize);
   window.addEventListener('click', onWindowClick);
 });
 
 onUnmounted(() => {
+  window.removeEventListener('resize', onWindowResize);
   window.removeEventListener('click', onWindowClick);
 });
 
@@ -131,6 +146,9 @@ function onWindowClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null;
   if (!target || !target.closest('.action-dropdown')) {
     showActionMenu.value = false;
+  }
+  if (!target || !target.closest('.parent-dropdown')) {
+    showParentMenu.value = false;
   }
 }
 
@@ -141,7 +159,6 @@ function initVoices() {
       const voices = window.speechSynthesis.getVoices();
       availableVoices.value = voices;
       if (!speechSettings.value.voiceURI && voices.length > 0) {
-        // 預設找台灣中文或廣東話/普通話
         const preferred =
           voices.find((v) => v.lang.includes('zh-TW') || v.lang.includes('zh_TW')) ||
           voices.find((v) => v.lang.startsWith('zh')) ||
@@ -164,12 +181,32 @@ function selectSong(id: string) {
   currentSongId.value = id;
   isEditing.value = false;
   showActionMenu.value = false;
+  showSongDrawer.value = false;
   activeParagraphIndex.value = null;
   lastAttemptedParagraphIndex.value = null;
   lastCompletedParagraphIndex.value = null;
 }
 
-// 自動抓取 YouTube 標題 (新增歌曲時)
+// 平滑滾動到指定段落 (朗讀時方便小朋友眼睛跟著歌詞跑)
+function scrollToParagraph(index: number) {
+  setTimeout(() => {
+    const el = document.getElementById(`para-${index}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, 60);
+}
+
+// 上下移動調整歌曲順序 (手機觸控特別方便)
+function moveSong(index: number, direction: 'up' | 'down') {
+  const targetIndex = direction === 'up' ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= songs.value.length) return;
+  const item = songs.value.splice(index, 1)[0];
+  songs.value.splice(targetIndex, 0, item);
+  saveSongs(songs.value);
+}
+
+// 自動抓取 YouTube 標題
 async function onUrlInputBlur() {
   if (!newUrl.value.trim()) return;
   isFetchingTitle.value = true;
@@ -186,13 +223,12 @@ async function onUrlInputBlur() {
   }
 }
 
-// 打開圖示挑選視窗
+// 圖示挑選開窗
 function openIconPicker(target: 'add' | 'edit') {
   iconPickerTarget.value = target;
   showIconPicker.value = true;
 }
 
-// 選擇圖示後的更新
 function handleIconSelected(iconName: string) {
   if (iconPickerTarget.value === 'add') {
     newIcon.value = iconName;
@@ -225,7 +261,6 @@ function handleAddSong() {
   saveSongs(songs.value);
   currentSongId.value = newSong.id;
 
-  // 清空表單並關閉彈窗
   newUrl.value = '';
   newTitle.value = '';
   newLyrics.value = '';
@@ -235,7 +270,7 @@ function handleAddSong() {
   isEditing.value = false;
 }
 
-// 進入編輯模式
+// 編輯功能
 function startEditing() {
   if (!currentSong.value) return;
   editTitle.value = currentSong.value.title;
@@ -246,7 +281,6 @@ function startEditing() {
   showActionMenu.value = false;
 }
 
-// 儲存編輯
 function saveEditing() {
   if (!currentSong.value) return;
   currentSong.value.title = editTitle.value.trim() || '未命名歌曲';
@@ -257,12 +291,10 @@ function saveEditing() {
   isEditing.value = false;
 }
 
-// 取消編輯
 function cancelEditing() {
   isEditing.value = false;
 }
 
-// 下拉選單點擊動作
 function handleDropdownEdit() {
   showActionMenu.value = false;
   startEditing();
@@ -273,7 +305,6 @@ function handleDropdownDelete() {
   deleteCurrentSong();
 }
 
-// 比對兩首歌是否所有內容欄位完全相同 (title, lyrics, icon, youtubeUrl)
 function isSongIdentical(
   a: { title: string; lyrics: string; icon?: string; youtubeUrl?: string },
   b: { title: string; lyrics: string; icon?: string; youtubeUrl?: string }
@@ -286,32 +317,25 @@ function isSongIdentical(
   );
 }
 
-// 處理重複標題，自動遞增 -1, -2, -3 流水號
 function getUniqueTitle(rawTitle: string, existingTitles: Set<string>): string {
   const title = rawTitle.trim() || '未命名歌曲';
   if (!existingTitles.has(title)) {
     existingTitles.add(title);
     return title;
   }
-
-  // 檢查是否已帶有 -數字 結尾，例如 "兩隻老虎-1"
   const match = title.match(/^(.*?)-(\d+)$/);
   const base = match ? match[1] : title;
   let counter = match ? parseInt(match[2], 10) + 1 : 1;
-
   while (existingTitles.has(`${base}-${counter}`)) {
     counter++;
   }
-
   const unique = `${base}-${counter}`;
   existingTitles.add(unique);
   return unique;
 }
 
-// 處理雲端代碼取歌成功 (Firebase SharedData)
 function handleCloudImportSuccess(data: SharedData) {
   const incomingList: Song[] = [];
-
   if (data.format === 'HanaSongs' && Array.isArray(data.songs)) {
     incomingList.push(...data.songs);
   } else if (data.song) {
@@ -323,7 +347,6 @@ function handleCloudImportSuccess(data: SharedData) {
     return;
   }
 
-  // 用於唯一標題檢查的集合 (預先納入目前歌單的所有標題)
   const existingTitles = new Set<string>(songs.value.map((s) => s.title.trim()));
   const acceptedSongs: Song[] = [];
   let skippedCount = 0;
@@ -336,7 +359,6 @@ function handleCloudImportSuccess(data: SharedData) {
       icon: (raw.icon || '').trim() || undefined
     };
 
-    // 檢查是否與既有歌曲（或同批次已接受的歌曲）完全相同 (title, lyrics, icon, youtubeUrl)
     const isDuplicate =
       songs.value.some((existing) => isSongIdentical(existing, candidate)) ||
       acceptedSongs.some((accepted) => isSongIdentical(accepted, candidate));
@@ -346,9 +368,7 @@ function handleCloudImportSuccess(data: SharedData) {
       continue;
     }
 
-    // 若有任何欄位不同，則當作新歌曲匯入；若 title 重複則自動加上 -1, -2, -3 流水號
     const uniqueTitle = getUniqueTitle(candidate.title, existingTitles);
-
     const newSong: Song = {
       id: 'song-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
       title: uniqueTitle,
@@ -357,7 +377,6 @@ function handleCloudImportSuccess(data: SharedData) {
       icon: candidate.icon,
       createdAt: Date.now()
     };
-
     acceptedSongs.push(newSong);
   }
 
@@ -367,21 +386,15 @@ function handleCloudImportSuccess(data: SharedData) {
     currentSongId.value = acceptedSongs[0].id;
   }
 
-  // 依據匯入與略過結果給予友善提示
   if (acceptedSongs.length === 0 && skippedCount > 0) {
-    alert(`ℹ️ 匯入的 ${skippedCount} 首歌曲皆已存在且內容完全相同，已為您自動略過，未重複加入。`);
+    alert(`ℹ️ 匯入的 ${skippedCount} 首歌曲皆已存在且內容完全相同，已為您自動略過。`);
   } else if (skippedCount > 0) {
-    alert(`🎉 成功匯入 ${acceptedSongs.length} 首歌曲！（已自動略過 ${skippedCount} 首完全重複的歌曲）`);
+    alert(`🎉 成功匯入 ${acceptedSongs.length} 首歌曲！（已自動略過 ${skippedCount} 首完全重複歌曲）`);
   } else {
-    if (acceptedSongs.length === 1) {
-      alert(`🎉 成功從雲端匯入歌曲《${acceptedSongs[0].title}》！`);
-    } else {
-      alert(`🎉 成功從雲端同步匯入 ${acceptedSongs.length} 首歌曲！`);
-    }
+    alert(`🎉 成功從雲端同步匯入 ${acceptedSongs.length} 首歌曲！`);
   }
 }
 
-// 刪除當前歌曲 (包含確認 confirm 視窗)
 function deleteCurrentSong() {
   if (!currentSong.value) return;
   const confirmed = window.confirm(`⚠️ 確定要刪除歌曲《${currentSong.value.title}》嗎？\n刪除後將無法恢復！`);
@@ -396,7 +409,7 @@ function deleteCurrentSong() {
   }
 }
 
-// 拖曳排序 (Drag and Drop)
+// 拖曳排序
 function onDragStart(index: number, event: DragEvent) {
   draggedSongIndex.value = index;
   if (event.dataTransfer) {
@@ -423,12 +436,9 @@ function onDrop(targetIndex: number) {
     dragOverSongIndex.value = null;
     return;
   }
-
-  // 將被拖曳的項目移至新位置
   const itemToMove = songs.value.splice(draggedSongIndex.value, 1)[0];
   songs.value.splice(targetIndex, 0, itemToMove);
   saveSongs(songs.value);
-
   draggedSongIndex.value = null;
   dragOverSongIndex.value = null;
 }
@@ -449,7 +459,6 @@ function stopSpeaking() {
 // 朗讀單一段落
 async function playParagraph(index: number) {
   if (isPlaying.value && activeParagraphIndex.value === index) {
-    // 再次點擊正在播的段落即停止（此時中斷，未播完該段，故 lastCompletedParagraphIndex 不變）
     stopSpeaking();
     return;
   }
@@ -459,6 +468,7 @@ async function playParagraph(index: number) {
   isSequentialPlaying.value = false;
   activeParagraphIndex.value = index;
   lastAttemptedParagraphIndex.value = index;
+  scrollToParagraph(index);
 
   const paragraphText = lyricParagraphs.value[index];
   if (!paragraphText) {
@@ -468,7 +478,6 @@ async function playParagraph(index: number) {
 
   const finished = await speaker.speakParagraph(paragraphText, speechSettings.value);
   if (finished && activeParagraphIndex.value === index) {
-    // 只有真正「播放完畢」時，才更新 lastCompletedParagraphIndex
     lastCompletedParagraphIndex.value = index;
     isPlaying.value = false;
     activeParagraphIndex.value = null;
@@ -478,7 +487,6 @@ async function playParagraph(index: number) {
 // 接續播放到底
 async function playAllSequentially() {
   if (isPlaying.value && isSequentialPlaying.value) {
-    // 若正在連續播放中再次按下，則停止
     stopSpeaking();
     return;
   }
@@ -487,15 +495,6 @@ async function playAllSequentially() {
   if (paragraphs.length === 0) return;
 
   let startIndex = 0;
-
-  // 判斷接續起點核心規則：
-  // 1. 若當前「正在播放第 N 段中」被按了接續：從當前第 N 段開始
-  // 2. 若當前處於停止狀態（或中途被使用者手動停止/中斷）：
-  //    - 如果前一次點擊/播放的段落是 N，且該段「尚未完整播完」：重播第 N 段！
-  //    - 如果第 N 段「已經完整播完」：
-  //      * 若 N 已是最後一段：從頭（第 1 段，索引 0）開始播放
-  //      * 若未到最後一段：從第 N + 1 段開始接續播放
-  // 3. 若從未播放過任何段落：從第 1 段（索引 0）開始
   if (isPlaying.value && activeParagraphIndex.value !== null) {
     startIndex = activeParagraphIndex.value;
   } else if (lastAttemptedParagraphIndex.value !== null) {
@@ -503,14 +502,12 @@ async function playAllSequentially() {
     const isAttemptCompleted = (lastCompletedParagraphIndex.value === attemptIdx);
 
     if (isAttemptCompleted) {
-      // 該段已完整念完 -> 下次播第 N+1 段
       if (attemptIdx >= paragraphs.length - 1) {
-        startIndex = 0; // 若已播完全部最後一段，從頭開始
+        startIndex = 0;
       } else {
         startIndex = attemptIdx + 1;
       }
     } else {
-      // 該段未完整念完 (中途暫停或中斷) -> 下次重新播放該段 N
       startIndex = attemptIdx;
     }
   } else {
@@ -526,14 +523,13 @@ async function playAllSequentially() {
 
     activeParagraphIndex.value = i;
     lastAttemptedParagraphIndex.value = i;
+    scrollToParagraph(i);
 
     const finished = await speaker.speakParagraph(paragraphs[i], speechSettings.value);
     if (!finished) break;
 
-    // 真正播完此段落
     lastCompletedParagraphIndex.value = i;
 
-    // 段落間依據 pausePerParagraphMs 停頓 (預設 500ms)
     if (i < paragraphs.length - 1 && isPlaying.value) {
       const pDelay = speechSettings.value.pausePerParagraphMs ?? 500;
       await new Promise((r) => setTimeout(r, pDelay));
@@ -547,139 +543,189 @@ async function playAllSequentially() {
 </script>
 
 <template>
-  <div class="app-layout">
-    <!-- 頂部導航列 -->
+  <div class="app-container">
+    <!-- 頂部歡樂導航列 -->
     <header class="app-header">
-      <div class="header-brand">
-        <span class="material-symbols-outlined brand-symbol">queue_music</span>
-        <div class="brand-text">
-          <h1>寶貝學唱歌 ‧ 歌詞朗讀助手</h1>
-          <p class="subtitle">自訂停頓節奏 ‧ 逐段念唱 ‧ 陪伴孩子快樂歌唱</p>
+      <div class="header-left">
+        <div class="header-brand" @click="showSongDrawer = false">
+          <span class="brand-mascot">🎵</span>
+          <div class="brand-titles">
+            <h1 class="app-title">寶貝學唱歌</h1>
+            <span class="app-tagline">歌詞朗讀 ‧ 快樂練唱</span>
+          </div>
         </div>
       </div>
+
+      <!-- 右側家長管理與快捷動作 -->
       <div class="header-actions">
-        <button class="btn btn-secondary" @click="showSettings = !showSettings" title="朗讀語音設定">
-          <span class="material-symbols-outlined btn-icon-inline">tune</span>
-          語音設定
+        <!-- 行動版：查看全部歌單按鈕 -->
+        <button
+          class="btn btn-pill btn-song-drawer-trigger"
+          @click="showSongDrawer = !showSongDrawer"
+          title="開啟完整歌單"
+        >
+          <span class="material-symbols-outlined">queue_music</span>
+          <span class="btn-text">歌單 ({{ songs.length }})</span>
         </button>
-        <button class="btn btn-secondary" @click="showBatchExport = true" title="勾選多首歌曲批次匯出至雲端">
-          <span class="material-symbols-outlined btn-icon-inline">cloud_upload</span>
-          匯出
-        </button>
-        <button class="btn btn-secondary" @click="showFetchModal = true" title="輸入 6 碼代碼從雲端匯入歌曲">
-          <span class="material-symbols-outlined btn-icon-inline">cloud_download</span>
-          匯入
-        </button>
-        <button class="btn btn-primary" @click="showAddModal = true">
-          <span class="material-symbols-outlined btn-icon-inline">add_circle</span>
-          新增歌曲
-        </button>
+
+        <!-- 收折的「家長專區」下拉選單，避免孩子誤點大人功能 -->
+        <div class="parent-dropdown">
+          <button
+            class="btn btn-pill btn-parent-toggle"
+            @click.stop="showParentMenu = !showParentMenu"
+            title="家長專區與管理"
+          >
+            <span class="material-symbols-outlined">family_restroom</span>
+            <span class="parent-label">家長專區</span>
+            <span class="material-symbols-outlined dropdown-arrow">
+              {{ showParentMenu ? 'arrow_drop_up' : 'arrow_drop_down' }}
+            </span>
+          </button>
+
+          <div v-if="showParentMenu" class="parent-menu-sheet" @click.stop>
+            <div class="menu-title">👨‍👩‍👧 家長專區管理</div>
+            <button class="menu-item" @click="showAddModal = true; showParentMenu = false">
+              <span class="material-symbols-outlined menu-icon text-indigo">add_circle</span>
+              <div class="menu-item-text">
+                <strong>新增歌曲</strong>
+                <small>輸入 YouTube 與歌詞</small>
+              </div>
+            </button>
+            <button class="menu-item" @click="showSettings = !showSettings; showParentMenu = false">
+              <span class="material-symbols-outlined menu-icon text-amber">tune</span>
+              <div class="menu-item-text">
+                <strong>語音與節奏設定</strong>
+                <small>調整語速與停頓時間</small>
+              </div>
+            </button>
+            <button class="menu-item" @click="showFetchModal = true; showParentMenu = false">
+              <span class="material-symbols-outlined menu-icon text-emerald">cloud_download</span>
+              <div class="menu-item-text">
+                <strong>雲端代碼取歌</strong>
+                <small>輸入 6 碼匯入新歌曲</small>
+              </div>
+            </button>
+            <button class="menu-item" @click="showBatchExport = true; showParentMenu = false">
+              <span class="material-symbols-outlined menu-icon text-blue">cloud_upload</span>
+              <div class="menu-item-text">
+                <strong>批次匯出分享</strong>
+                <small>打包歌曲上傳產生代碼</small>
+              </div>
+            </button>
+          </div>
+        </div>
       </div>
     </header>
 
     <!-- 語音設定滑出面板 -->
     <div v-if="showSettings" class="settings-drawer">
-      <div class="settings-header">
-        <div class="drawer-title">
-          <span class="material-symbols-outlined">settings_voice</span>
-          <h3>朗讀與停頓節奏設定</h3>
-        </div>
-        <div class="settings-header-actions">
-          <span v-if="showSettingsSaved" class="saved-badge">✓ 設定已儲存！</span>
-          <button class="btn btn-primary btn-sm" @click="saveSpeechSettings">
-            <span class="material-symbols-outlined btn-icon-inline">save</span>
-            儲存設定
-          </button>
-          <button class="btn-icon" @click="showSettings = false">✕</button>
-        </div>
-      </div>
-      <div class="settings-body">
-        <div class="form-group">
-          <label>朗讀語音 (Voice)：</label>
-          <select v-model="speechSettings.voiceURI" class="form-control">
-            <option v-for="v in availableVoices" :key="v.voiceURI" :value="v.voiceURI">
-              {{ v.name }} ({{ v.lang }})
-            </option>
-          </select>
-        </div>
-        <div class="form-group">
-          <div class="label-with-val">
-            <label>語速 (Speed)：</label>
-            <span class="badge">{{ speechSettings.rate }}x</span>
+      <div class="settings-drawer-inner">
+        <div class="settings-header">
+          <div class="drawer-title">
+            <span class="material-symbols-outlined title-icon">settings_voice</span>
+            <h3>語音朗讀與停頓節奏設定</h3>
           </div>
-          <input
-            type="range"
-            min="0.5"
-            max="1.5"
-            step="0.05"
-            v-model.number="speechSettings.rate"
-            class="range-slider"
-          />
-        </div>
-        <div class="form-group">
-          <div class="label-with-val">
-            <label>1. 空白停頓時間 (每 1 個空格)：</label>
-            <span class="badge">{{ speechSettings.pausePerSpaceMs }} ms</span>
+          <div class="settings-header-actions">
+            <span v-if="showSettingsSaved" class="saved-badge">✓ 設定已儲存！</span>
+            <button class="btn btn-primary btn-sm" @click="saveSpeechSettings">
+              <span class="material-symbols-outlined">save</span>
+              儲存設定
+            </button>
+            <button class="btn-icon" @click="showSettings = false">✕</button>
           </div>
-          <input
-            type="range"
-            min="20"
-            max="500"
-            step="10"
-            v-model.number="speechSettings.pausePerSpaceMs"
-            class="range-slider"
-          />
-          <small class="tip">兩個空格將自動停頓 {{ speechSettings.pausePerSpaceMs * 2 }} ms，幫助孩子抓準歌唱節拍！</small>
         </div>
-        <div class="form-group">
-          <div class="label-with-val">
-            <label>2. 換行停頓時間 (歌詞單行換行)：</label>
-            <span class="badge">{{ speechSettings.pausePerNewlineMs }} ms</span>
+
+        <div class="settings-body">
+          <div class="form-group">
+            <label>朗讀語音 (Voice)：</label>
+            <select v-model="speechSettings.voiceURI" class="form-control">
+              <option v-for="v in availableVoices" :key="v.voiceURI" :value="v.voiceURI">
+                {{ v.name }} ({{ v.lang }})
+              </option>
+            </select>
           </div>
-          <input
-            type="range"
-            min="0"
-            max="500"
-            step="10"
-            v-model.number="speechSettings.pausePerNewlineMs"
-            class="range-slider"
-          />
-          <small class="tip">歌詞每一行結尾處的呼吸換氣時間。</small>
-        </div>
-        <div class="form-group">
-          <div class="label-with-val">
-            <label>3. 換段停頓時間 (接續播放時的段落間隔)：</label>
-            <span class="badge">{{ speechSettings.pausePerParagraphMs }} ms</span>
+          <div class="form-group">
+            <div class="label-with-val">
+              <label>語速 (Speed)：</label>
+              <span class="badge">{{ speechSettings.rate }}x</span>
+            </div>
+            <input
+              type="range"
+              min="0.5"
+              max="1.5"
+              step="0.05"
+              v-model.number="speechSettings.rate"
+              class="range-slider"
+            />
+            <small class="tip">清晰明快的語速最適合 5~6 歲小朋友發音跟讀。</small>
           </div>
-          <input
-            type="range"
-            min="100"
-            max="1500"
-            step="50"
-            v-model.number="speechSettings.pausePerParagraphMs"
-            class="range-slider"
-          />
-          <small class="tip">連續播放時，整段念完與下一段開始前的準備時間。</small>
+          <div class="form-group">
+            <div class="label-with-val">
+              <label>1. 空白停頓時間 (每 1 個空格)：</label>
+              <span class="badge">{{ speechSettings.pausePerSpaceMs }} ms</span>
+            </div>
+            <input
+              type="range"
+              min="20"
+              max="500"
+              step="10"
+              v-model.number="speechSettings.pausePerSpaceMs"
+              class="range-slider"
+            />
+            <small class="tip">連續兩個空格會停頓 {{ speechSettings.pausePerSpaceMs * 2 }} ms，幫助孩子抓準節奏！</small>
+          </div>
+          <div class="form-group">
+            <div class="label-with-val">
+              <label>2. 換行停頓時間 (歌詞單行換行)：</label>
+              <span class="badge">{{ speechSettings.pausePerNewlineMs }} ms</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="500"
+              step="10"
+              v-model.number="speechSettings.pausePerNewlineMs"
+              class="range-slider"
+            />
+            <small class="tip">換行處預留呼吸換氣的節奏時間。</small>
+          </div>
+          <div class="form-group">
+            <div class="label-with-val">
+              <label>3. 換段停頓時間 (接續播放段落間隔)：</label>
+              <span class="badge">{{ speechSettings.pausePerParagraphMs }} ms</span>
+            </div>
+            <input
+              type="range"
+              min="100"
+              max="1500"
+              step="50"
+              v-model.number="speechSettings.pausePerParagraphMs"
+              class="range-slider"
+            />
+            <small class="tip">整段念完與下一段開始前的準備時間。</small>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- 主要工作區 -->
-    <div class="app-main">
-      <!-- 左側歌單欄 -->
-      <aside class="sidebar">
+    <!-- 主要工作區 (PC 雙欄 / 手機單欄) -->
+    <div class="main-layout">
+      <!-- 左側歌曲庫 (桌面版顯示，含拖曳與上下排序按鈕) -->
+      <aside class="desktop-sidebar">
         <div class="sidebar-header">
-          <div class="sidebar-title-wrap">
-            <h2>🎶 歌曲庫 ({{ songs.length }})</h2>
-            <span class="drag-hint">↕ 拖曳可排序</span>
+          <div class="sidebar-title-row">
+            <h2>🎶 歡樂歌庫</h2>
+            <span class="song-count-pill">{{ songs.length }} 首</span>
           </div>
+          <span class="drag-hint">↕ 拖曳或按上下箭頭可調整順序</span>
         </div>
-        <div class="song-list">
+
+        <div class="desktop-song-list">
           <div
             v-for="(song, sIdx) in songs"
             :key="song.id"
             :class="[
-              'song-item',
+              'song-item-card',
               {
                 active: song.id === currentSongId,
                 'drag-over': dragOverSongIndex === sIdx,
@@ -694,112 +740,132 @@ async function playAllSequentially() {
             @dragend="onDragEnd"
             @click="selectSong(song.id)"
           >
-            <!-- 拖曳把手提示 -->
+            <!-- 拖曳把手 -->
             <span class="material-symbols-outlined drag-handle" title="按住可拖曳排序">drag_indicator</span>
 
-            <!-- 歌曲圖示或 YouTube 縮圖 -->
+            <!-- 歌曲圖示 / 縮圖 -->
             <div
-              class="song-item-icon-box"
+              class="song-item-thumb-box"
               :class="{ 'is-thumb': !song.icon && getYouTubeThumbnailUrl(song.youtubeUrl) }"
             >
               <img
                 v-if="!song.icon && getYouTubeThumbnailUrl(song.youtubeUrl)"
                 :src="getYouTubeThumbnailUrl(song.youtubeUrl)!"
-                class="song-item-thumb"
+                class="thumb-img"
                 alt=""
                 loading="lazy"
               />
-              <span v-else class="material-symbols-outlined song-icon">
+              <span v-else class="material-symbols-outlined item-icon">
                 {{ song.icon || 'music_note' }}
               </span>
             </div>
 
-            <div class="song-item-info">
-              <div class="song-item-title">{{ song.title }}</div>
-              <div class="song-item-meta" v-if="song.youtubeUrl">
-                <span class="yt-badge">YouTube</span>
+            <!-- 標題與標籤 -->
+            <div class="song-item-meta">
+              <div class="song-name">{{ song.title }}</div>
+              <div class="song-sub-info" v-if="song.youtubeUrl">
+                <span class="yt-pill">YouTube</span>
               </div>
             </div>
+
+            <!-- 排序輔助按鈕 (方便小孩或觸控螢幕精準點擊) -->
+            <div class="reorder-actions" @click.stop>
+              <button
+                class="btn-arrow"
+                :disabled="sIdx === 0"
+                @click="moveSong(sIdx, 'up')"
+                title="向上移動"
+              >
+                ▲
+              </button>
+              <button
+                class="btn-arrow"
+                :disabled="sIdx === songs.length - 1"
+                @click="moveSong(sIdx, 'down')"
+                title="向下移動"
+              >
+                ▼
+              </button>
+            </div>
           </div>
-          <div v-if="songs.length === 0" class="empty-songs">
-            目前還沒有歌曲，點擊右上角「➕ 新增歌曲」開始加入吧！
+
+          <div v-if="songs.length === 0" class="empty-song-box">
+            <span class="material-symbols-outlined empty-icon-sm">queue_music</span>
+            <p>目前還沒有歌曲，點擊右上角「➕ 新增歌曲」開始加入吧！</p>
           </div>
         </div>
       </aside>
 
-      <!-- 右側歌詞與播放主畫面 -->
-      <main class="content-area" v-if="currentSong">
-        <!-- 歌曲頂部資訊與控制列 -->
-        <div class="song-header-card">
-          <div class="song-title-row">
-            <div class="song-identity">
+      <!-- 右側 (主要練唱與歌詞舞台) -->
+      <main class="reading-stage" v-if="currentSong">
+        <!-- 歌曲頭部資訊卡片 -->
+        <div class="song-hero-card">
+          <div class="hero-header-row">
+            <div class="hero-identity">
               <div
-                class="current-song-icon-box"
+                class="hero-icon-box"
                 :class="{ 'has-thumb': !currentSong.icon && getYouTubeThumbnailUrl(currentSong.youtubeUrl) }"
               >
                 <img
                   v-if="!currentSong.icon && getYouTubeThumbnailUrl(currentSong.youtubeUrl)"
                   :src="getYouTubeThumbnailUrl(currentSong.youtubeUrl)!"
-                  class="current-song-thumb-img"
+                  class="hero-thumb-img"
                   alt=""
                 />
-                <span v-else class="material-symbols-outlined current-song-icon">
+                <span v-else class="material-symbols-outlined hero-icon">
                   {{ currentSong.icon || 'music_note' }}
                 </span>
               </div>
-              <div>
-                <h2 class="current-title">{{ currentSong.title }}</h2>
-                <div class="current-url" v-if="currentSong.youtubeUrl">
-                  <span class="url-label">YouTube:</span>
-                  <a :href="currentSong.youtubeUrl" target="_blank" rel="noreferrer">
-                    {{ currentSong.youtubeUrl }}
-                  </a>
-                </div>
+              <div class="hero-titles">
+                <div class="hero-tag">🎵 正在練習歌曲</div>
+                <h2 class="hero-song-title">{{ currentSong.title }}</h2>
               </div>
             </div>
 
-            <!-- 操作按鈕群 -->
-            <div class="song-action-buttons">
-              <!-- 顯示 YouTube 影片播放器 (小孩可直接操作) -->
+            <!-- 歌曲管理操作區 -->
+            <div class="hero-action-buttons">
+              <!-- YouTube 展開/收起按鈕 (僅桌面版顯示；行動版固定打開影片) -->
               <button
-                v-if="currentEmbedUrl"
-                class="btn btn-outline-yt"
+                v-if="currentEmbedUrl && !isMobileView"
+                class="btn btn-pill btn-video-toggle"
                 @click="showPlayer = !showPlayer"
               >
-                <span class="material-symbols-outlined btn-icon-inline">smart_display</span>
-                {{ showPlayer ? '收起影片' : '展開影片' }}
+                <span class="material-symbols-outlined">
+                  {{ showPlayer ? 'visibility_off' : 'smart_display' }}
+                </span>
+                <span>{{ showPlayer ? '收起影片' : '觀看影片' }}</span>
               </button>
 
-              <!-- 編輯中時顯示儲存與取消 -->
+              <!-- 編輯狀態 -->
               <template v-if="isEditing">
-                <button class="btn btn-primary" @click="saveEditing">
-                  <span class="material-symbols-outlined btn-icon-inline">save</span>
+                <button class="btn btn-pill btn-success" @click="saveEditing">
+                  <span class="material-symbols-outlined">save</span>
                   儲存修改
                 </button>
-                <button class="btn btn-ghost" @click="cancelEditing">
+                <button class="btn btn-pill btn-ghost" @click="cancelEditing">
                   取消
                 </button>
               </template>
 
-              <!-- 非編輯時：大人管理功能收合進摺疊選單，防止小孩誤按 -->
+              <!-- 非編輯狀態：大人管理功能折疊 -->
               <div v-else class="action-dropdown">
                 <button
-                  class="btn btn-outline btn-menu-toggle"
+                  class="btn btn-pill btn-outline-manage"
                   @click.stop="showActionMenu = !showActionMenu"
-                  title="更多歌曲管理選項"
+                  title="歌曲管理選項"
                 >
-                  <span class="material-symbols-outlined btn-icon-inline">more_vert</span>
+                  <span class="material-symbols-outlined">more_horiz</span>
                   <span>管理</span>
                 </button>
 
                 <div v-if="showActionMenu" class="dropdown-menu" @click.stop>
                   <button class="dropdown-item" @click="handleDropdownEdit">
-                    <span class="material-symbols-outlined dropdown-icon">edit</span>
+                    <span class="material-symbols-outlined text-indigo">edit</span>
                     <span>編輯歌詞與設定</span>
                   </button>
                   <div class="dropdown-divider"></div>
                   <button class="dropdown-item text-danger" @click="handleDropdownDelete">
-                    <span class="material-symbols-outlined dropdown-icon">delete</span>
+                    <span class="material-symbols-outlined">delete</span>
                     <span>刪除此首歌曲</span>
                   </button>
                 </div>
@@ -807,8 +873,8 @@ async function playAllSequentially() {
             </div>
           </div>
 
-          <!-- YouTube 嵌入播放器 -->
-          <div v-if="showPlayer && currentEmbedUrl" class="video-embed-container">
+          <!-- YouTube 嵌入影片區 (響應式 16:9；行動版固定打開) -->
+          <div v-if="(isMobileView || showPlayer) && currentEmbedUrl" class="video-container">
             <iframe
               :src="currentEmbedUrl"
               frameborder="0"
@@ -817,48 +883,57 @@ async function playAllSequentially() {
             ></iframe>
           </div>
 
-          <!-- 非編輯模式的全局播放工具列 -->
-          <div v-if="!isEditing" class="play-toolbar">
-            <button
-              :class="['btn', isSequentialPlaying ? 'btn-playing' : 'btn-accent']"
-              @click="playAllSequentially"
-            >
-              <span class="material-symbols-outlined btn-icon-inline">
-                {{ isSequentialPlaying ? 'pause_circle' : 'play_circle' }}
-              </span>
-              <span v-if="isSequentialPlaying">停止接續播放</span>
-              <span v-else>接續播放到底</span>
-            </button>
+          <!-- 幼童友善：巨型主控朗讀列 (超大按鈕、清晰提示) -->
+          <div v-if="!isEditing" class="giant-kid-controller">
+            <div class="primary-controls">
+              <!-- 大綠/大橘 按鈕：接續念到底 -->
+              <button
+                :class="['btn', 'btn-giant-play', isSequentialPlaying ? 'is-playing' : 'is-ready']"
+                @click="playAllSequentially"
+              >
+                <span class="material-symbols-outlined giant-icon">
+                  {{ isSequentialPlaying ? 'pause_circle' : 'play_circle' }}
+                </span>
+                <span class="giant-text">
+                  {{ isSequentialPlaying ? '暫停接續念' : '▶ 接續念到底' }}
+                </span>
+              </button>
 
-            <button v-if="isPlaying" class="btn btn-danger" @click="stopSpeaking">
-              <span class="material-symbols-outlined btn-icon-inline">stop</span>
-              停止朗讀
-            </button>
-
-            <div class="play-status-tip" v-if="activeParagraphIndex !== null">
-              <span class="pulse-dot"></span>
-              正在朗讀第 <strong>{{ activeParagraphIndex + 1 }}</strong> 段
+              <!-- 停止朗讀大按鈕 (播放中時顯現) -->
+              <button v-if="isPlaying" class="btn btn-giant-stop" @click="stopSpeaking">
+                <span class="material-symbols-outlined">stop_circle</span>
+                <span>停止</span>
+              </button>
             </div>
-            <div class="play-status-tip" v-else-if="lastAttemptedParagraphIndex !== null">
+
+            <!-- 小朋友友善進度氣泡 -->
+            <div class="kid-status-bubble" v-if="activeParagraphIndex !== null">
+              <span class="pulse-sparkle">🎵</span>
+              <span>正在念第 <strong>{{ activeParagraphIndex + 1 }}</strong> 段 (共 {{ lyricParagraphs.length }} 段) ～ 跟著大聲念！</span>
+            </div>
+            <div class="kid-status-bubble muted" v-else-if="lastAttemptedParagraphIndex !== null">
               <span v-if="lastCompletedParagraphIndex === lastAttemptedParagraphIndex">
-                已播完第 <strong>{{ lastCompletedParagraphIndex + 1 }}</strong> 段 (下次將接續播第 {{ lastCompletedParagraphIndex + 2 > lyricParagraphs.length ? 1 : lastCompletedParagraphIndex + 2 }} 段)
+                🌟 太棒了！已完整念完第 <strong>{{ lastCompletedParagraphIndex + 1 }}</strong> 段 (按接續播放將從下一段開始)
               </span>
               <span v-else>
-                第 <strong>{{ lastAttemptedParagraphIndex + 1 }}</strong> 段尚未念完 (下次按下將重播此段)
+                ⏸️ 剛才念到第 <strong>{{ lastAttemptedParagraphIndex + 1 }}</strong> 段 (按接續播放將重播這段)
               </span>
+            </div>
+            <div class="kid-status-bubble initial" v-else>
+              <span>🐰 點選「接續念到底」或下方任一段落，一起快樂學唱歌！</span>
             </div>
           </div>
         </div>
 
-        <!-- 編輯模式 -->
+        <!-- 編輯模式表單 -->
         <div v-if="isEditing" class="edit-card">
           <div class="edit-hint-banner">
-            💡 <strong>小提示：</strong>段落之間請用「<strong>兩個換行</strong>」分開。歌詞中按「<strong>空白鍵</strong>」可在朗讀時自動產生停頓拍子！
+            💡 <strong>歌詞小秘訣：</strong>每一段之間請按兩次 Enter (<strong>空一行</strong>) 分開。歌詞字與字之間加「<strong>空格</strong>」會自動產生節奏停頓喔！
           </div>
 
-          <!-- 圖示設定 (選填/次要) -->
+          <!-- 圖示設定 -->
           <div class="form-group">
-            <label>歌曲專屬圖示 (選填，未設定時自動使用 YouTube 縮圖)：</label>
+            <label>歌曲可愛圖示 (選填，未設定時自動使用 YouTube 縮圖)：</label>
             <div class="icon-selector-field">
               <div class="selected-icon-preview">
                 <span v-if="editIcon" class="material-symbols-outlined">{{ editIcon }}</span>
@@ -871,105 +946,218 @@ async function playAllSequentially() {
                 <span v-else class="material-symbols-outlined placeholder-icon">smart_display</span>
               </div>
               <div class="icon-field-actions">
-                <button type="button" class="btn btn-secondary" @click="openIconPicker('edit')">
-                  <span class="material-symbols-outlined btn-icon-inline">image_search</span>
-                  {{ editIcon ? '更換圖示' : '挑選圖示 (次要)' }}
+                <button type="button" class="btn btn-secondary btn-pill" @click="openIconPicker('edit')">
+                  <span class="material-symbols-outlined">image_search</span>
+                  {{ editIcon ? '更換圖示' : '挑選圖示' }}
                 </button>
                 <button
                   v-if="editIcon"
                   type="button"
-                  class="btn btn-ghost text-danger"
+                  class="btn btn-ghost btn-pill text-danger"
                   @click="editIcon = ''"
                 >
-                  <span class="material-symbols-outlined btn-icon-inline">clear</span>
-                  清除圖示 (改用 YouTube 縮圖)
+                  <span class="material-symbols-outlined">clear</span>
+                  清除圖示 (使用 YouTube 縮圖)
                 </button>
               </div>
             </div>
-            <small class="tip">預設自動採用 YouTube 縮圖，若縮圖難以辨認歌曲時再挑選圖示即可。</small>
           </div>
 
           <div class="form-group">
             <label>歌曲標題：</label>
             <input v-model="editTitle" type="text" class="form-control" />
           </div>
+
           <div class="form-group">
-            <label>YouTube 網址：</label>
+            <label>YouTube 影片網址：</label>
             <input v-model="editYoutubeUrl" type="text" class="form-control" />
           </div>
+
           <div class="form-group">
-            <label>歌詞內容 (雙換行代表段落，空白代表停頓)：</label>
+            <label>歌詞內容：</label>
             <textarea
               v-model="editLyrics"
-              rows="12"
+              rows="10"
               class="form-control lyrics-textarea"
               placeholder="輸入或貼上歌詞..."
             ></textarea>
           </div>
         </div>
 
-        <!-- 檢視模式：段落清單呈現 -->
-        <div v-else class="lyrics-view-container">
+        <!-- 歌詞檢視模式：幼童友善段落大卡片 -->
+        <div v-else class="lyrics-card-list">
           <div
             v-for="(para, pIdx) in lyricParagraphs"
+            :id="`para-${pIdx}`"
             :key="pIdx"
             :class="[
-              'paragraph-card',
+              'kid-paragraph-box',
               {
                 'is-active': activeParagraphIndex === pIdx,
                 'is-last-played': lastAttemptedParagraphIndex === pIdx && activeParagraphIndex !== pIdx
               }
             ]"
           >
-            <div class="paragraph-sidebar">
-              <span class="paragraph-badge">段落 {{ pIdx + 1 }}</span>
+            <!-- 卡片頂部欄：段落標籤與大按鈕 -->
+            <div class="para-card-header">
+              <div class="para-badge-wrap">
+                <span class="para-emoji">{{ getParagraphEmoji(pIdx) }}</span>
+                <span class="para-title-text">第 {{ pIdx + 1 }} 段</span>
+              </div>
+
+              <!-- 單段朗讀按鈕 (超大點擊範圍) -->
               <button
                 :class="[
-                  'btn-play-para',
-                  { 'para-playing': activeParagraphIndex === pIdx }
+                  'btn',
+                  'btn-pill',
+                  'btn-para-play',
+                  { 'is-reading': activeParagraphIndex === pIdx }
                 ]"
                 @click="playParagraph(pIdx)"
-                :title="activeParagraphIndex === pIdx ? '點擊暫停' : '播放此段落'"
+                :title="activeParagraphIndex === pIdx ? '暫停朗讀' : '播放此段落'"
               >
-                <span class="material-symbols-outlined btn-icon-inline">
-                  {{ activeParagraphIndex === pIdx ? 'pause' : 'play_arrow' }}
+                <span class="material-symbols-outlined">
+                  {{ activeParagraphIndex === pIdx ? 'pause_circle' : 'play_arrow' }}
                 </span>
-                <span v-if="activeParagraphIndex === pIdx">暫停</span>
-                <span v-else>播放此段</span>
+                <span>{{ activeParagraphIndex === pIdx ? '暫停' : '念這段' }}</span>
               </button>
             </div>
-            <div class="paragraph-text-wrapper">
-              <div class="paragraph-text">
+
+            <!-- 歌詞內文 (大字體、寬行高、易辨識) -->
+            <div class="para-card-body">
+              <div class="lyrics-text">
                 <template v-for="(line, lIdx) in para.split('\n')" :key="lIdx">
                   <div class="lyric-line">{{ line }}</div>
                 </template>
               </div>
-              <div class="paragraph-indicator" v-if="activeParagraphIndex === pIdx">
-                <span class="sound-wave">
-                  <span></span><span></span><span></span><span></span>
-                </span>
-                正在朗讀中...
+
+              <!-- 播放動態提示 -->
+              <div class="para-indicator" v-if="activeParagraphIndex === pIdx">
+                <div class="kid-sound-wave">
+                  <span></span><span></span><span></span><span></span><span></span>
+                </div>
+                <span class="indicator-text">🎵 正在朗讀這一段... 大聲跟著唱！</span>
               </div>
-              <div class="paragraph-indicator last-mark" v-else-if="lastAttemptedParagraphIndex === pIdx">
-                <span v-if="lastCompletedParagraphIndex === pIdx">📌 已完整播放完畢</span>
-                <span v-else>⏸️ 播放中斷於此段 (重播點)</span>
+              <div class="para-indicator completed" v-else-if="lastCompletedParagraphIndex === pIdx">
+                <span class="indicator-icon">🌟</span>
+                <span class="indicator-text">太棒了！這一段已經念完囉</span>
               </div>
             </div>
           </div>
 
-          <div v-if="lyricParagraphs.length === 0" class="no-lyrics">
-            尚未填寫歌詞，請點擊上方「✏️ 編輯歌詞」輸入內容！
+          <div v-if="lyricParagraphs.length === 0" class="no-lyrics-card">
+            <span class="material-symbols-outlined no-lyrics-icon">edit_note</span>
+            <h3>這首歌還沒有輸入歌詞喔！</h3>
+            <p>點選右上角「管理」➜「編輯歌詞」，貼入歌詞即可開始練習。</p>
           </div>
         </div>
       </main>
 
-      <main class="content-area empty-state" v-else>
-        <div class="empty-box">
-          <span class="material-symbols-outlined empty-icon">sentiment_very_satisfied</span>
-          <h2>歡迎來到寶貝歌詞朗讀助手！</h2>
-          <p>請點擊右上角「➕ 新增歌曲」貼入 YouTube 網址與歌詞，幫助小朋友開心學唱歌！</p>
+      <!-- 空白歌單提示 -->
+      <main class="reading-stage empty-stage" v-else>
+        <div class="empty-welcome-card">
+          <span class="welcome-mascot">🎉</span>
+          <h2>歡迎來到寶貝學唱歌！</h2>
+          <p>請點選右上角「➕ 新增歌曲」，貼上 YouTube 影片網址與歌詞，讓朗讀助手陪伴孩子快樂學唱歌！</p>
+          <button class="btn btn-pill btn-primary-bounce btn-lg" @click="showAddModal = true">
+            <span class="material-symbols-outlined">add_circle</span>
+            立即新增第一首歌曲
+          </button>
         </div>
       </main>
+    </div>
+
+    <!-- 行動/平板專屬：底部常駐朗讀迷你播放列 (當滾動到下方時隨時可暫停或播放) -->
+    <div
+      v-if="currentSong && !isEditing && lyricParagraphs.length > 0"
+      class="mobile-bottom-dock"
+    >
+      <div class="dock-inner">
+        <div class="dock-info">
+          <span class="dock-title">{{ currentSong.title }}</span>
+          <span class="dock-status" v-if="activeParagraphIndex !== null">
+            🎵 朗讀第 {{ activeParagraphIndex + 1 }} 段中
+          </span>
+          <span class="dock-status" v-else>
+            {{ isSequentialPlaying ? '準備中' : '隨時可播放' }}
+          </span>
+        </div>
+        <div class="dock-controls">
+          <button
+            :class="['btn', 'btn-dock-play', isSequentialPlaying ? 'btn-playing' : 'btn-accent']"
+            @click="playAllSequentially"
+          >
+            <span class="material-symbols-outlined">
+              {{ isSequentialPlaying ? 'pause' : 'play_arrow' }}
+            </span>
+            <span>{{ isSequentialPlaying ? '暫停' : '接續念' }}</span>
+          </button>
+          <button v-if="isPlaying" class="btn btn-dock-stop" @click="stopSpeaking">
+            <span class="material-symbols-outlined">stop</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 行動版：歌庫抽屜 Modal (Bottom Sheet / Full Drawer) -->
+    <div v-if="showSongDrawer" class="drawer-overlay" @click.self="showSongDrawer = false">
+      <div class="drawer-sheet">
+        <div class="drawer-sheet-header">
+          <div class="sheet-title-row">
+            <span class="material-symbols-outlined sheet-icon">queue_music</span>
+            <h3>全部歌曲庫 ({{ songs.length }})</h3>
+          </div>
+          <button class="btn-icon" @click="showSongDrawer = false">✕</button>
+        </div>
+        <div class="drawer-sheet-body">
+          <div
+            v-for="(song, sIdx) in songs"
+            :key="song.id"
+            :class="['sheet-song-item', { active: song.id === currentSongId }]"
+            @click="selectSong(song.id)"
+          >
+            <div class="sheet-thumb-box">
+              <img
+                v-if="!song.icon && getYouTubeThumbnailUrl(song.youtubeUrl)"
+                :src="getYouTubeThumbnailUrl(song.youtubeUrl)!"
+                class="sheet-thumb-img"
+                alt=""
+              />
+              <span v-else class="material-symbols-outlined sheet-item-icon">
+                {{ song.icon || 'music_note' }}
+              </span>
+            </div>
+            <div class="sheet-song-meta">
+              <div class="sheet-song-title">{{ song.title }}</div>
+              <span v-if="song.id === currentSongId" class="sheet-current-badge">正在朗讀</span>
+            </div>
+            <div class="sheet-reorder-buttons" @click.stop>
+              <button
+                class="btn-sheet-arrow"
+                :disabled="sIdx === 0"
+                @click="moveSong(sIdx, 'up')"
+                title="上移"
+              >
+                ▲
+              </button>
+              <button
+                class="btn-sheet-arrow"
+                :disabled="sIdx === songs.length - 1"
+                @click="moveSong(sIdx, 'down')"
+                title="下移"
+              >
+                ▼
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-sheet-footer">
+          <button class="btn btn-pill btn-primary-bounce btn-block" @click="showAddModal = true; showSongDrawer = false">
+            <span class="material-symbols-outlined">add_circle</span>
+            新增一首新歌曲
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- 新增歌曲彈窗 (Modal) -->
@@ -977,7 +1165,7 @@ async function playAllSequentially() {
       <div class="modal-card">
         <div class="modal-header">
           <div class="title-wrap">
-            <span class="material-symbols-outlined header-icon">library_music</span>
+            <span class="material-symbols-outlined header-icon text-indigo">library_music</span>
             <h3>新增學唱歌曲</h3>
           </div>
           <button class="btn-icon" @click="showAddModal = false">✕</button>
@@ -994,19 +1182,19 @@ async function playAllSequentially() {
                 placeholder="例如：https://www.youtube.com/watch?v=..."
               />
               <button
-                class="btn btn-secondary"
+                class="btn btn-pill btn-secondary"
                 :disabled="isFetchingTitle || !newUrl"
                 @click="onUrlInputBlur"
               >
-                <span class="material-symbols-outlined btn-icon-inline">travel_explore</span>
+                <span class="material-symbols-outlined">travel_explore</span>
                 {{ isFetchingTitle ? '抓取中...' : '抓取標題' }}
               </button>
             </div>
             <small v-if="fetchError" class="error-tip">{{ fetchError }}</small>
-            <small v-else class="tip">貼入網址後點擊或移開，將自動抓取 YouTube 影片標題與縮圖！</small>
+            <small v-else class="tip">貼入網址後點擊「抓取標題」，系統將自動取得 YouTube 標題與封面！</small>
           </div>
 
-          <!-- 圖示設定 (選填/次要) -->
+          <!-- 圖示設定 -->
           <div class="form-group">
             <label>歌曲專屬圖示 (選填，未設定時自動使用 YouTube 縮圖)：</label>
             <div class="icon-selector-field">
@@ -1021,22 +1209,21 @@ async function playAllSequentially() {
                 <span v-else class="material-symbols-outlined placeholder-icon">smart_display</span>
               </div>
               <div class="icon-field-actions">
-                <button type="button" class="btn btn-secondary" @click="openIconPicker('add')">
-                  <span class="material-symbols-outlined btn-icon-inline">image_search</span>
-                  {{ newIcon ? '更換圖示' : '挑選圖示 (次要)' }}
+                <button type="button" class="btn btn-pill btn-secondary" @click="openIconPicker('add')">
+                  <span class="material-symbols-outlined">image_search</span>
+                  {{ newIcon ? '更換圖示' : '挑選圖示' }}
                 </button>
                 <button
                   v-if="newIcon"
                   type="button"
-                  class="btn btn-ghost text-danger"
+                  class="btn btn-pill btn-ghost text-danger"
                   @click="newIcon = ''"
                 >
-                  <span class="material-symbols-outlined btn-icon-inline">clear</span>
+                  <span class="material-symbols-outlined">clear</span>
                   清除 (使用 YouTube 縮圖)
                 </button>
               </div>
             </div>
-            <small class="tip">預設自動使用 YouTube 縮圖；若縮圖難以辨識，可自訂挑選可愛圖示。</small>
           </div>
 
           <div class="form-group">
@@ -1052,39 +1239,39 @@ async function playAllSequentially() {
           <div class="form-group">
             <label>歌詞內容：</label>
             <div class="tip-box">
-              ⭐ <strong>段落規則：</strong>請在段落間隔處輸入「<strong>兩個換行</strong>」。<br />
-              ⭐ <strong>停頓節奏：</strong>歌詞字與字之間加「<strong>空白</strong>」，系統會自動停頓相應的時間！
+              ⭐ <strong>段落規則：</strong>請在段落之間輸入「<strong>兩個換行 (空一行)</strong>」。<br />
+              ⭐ <strong>停頓節奏：</strong>歌詞字詞之間加「<strong>空白</strong>」，系統會自動停頓相應的時間！
             </div>
             <textarea
               v-model="newLyrics"
-              rows="8"
+              rows="7"
               class="form-control lyrics-textarea"
-              placeholder="請貼入您找到的多行歌詞..."
+              placeholder="請貼入您準備的多行歌詞..."
             ></textarea>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-ghost" @click="showAddModal = false">取消</button>
-          <button class="btn btn-primary" @click="handleAddSong">確定新增</button>
+          <button class="btn btn-pill btn-ghost" @click="showAddModal = false">取消</button>
+          <button class="btn btn-pill btn-primary-bounce" @click="handleAddSong">確定新增</button>
         </div>
       </div>
     </div>
 
-    <!-- 批次匯出歌曲彈窗 (Modal) -->
+    <!-- 批次匯出歌曲彈窗 -->
     <BatchExportModal
       :show="showBatchExport"
       :songs="songs"
       @close="showBatchExport = false"
     />
 
-    <!-- 雲端取歌彈窗 (Firebase 輸入6碼) -->
+    <!-- 雲端取歌彈窗 (Firebase 輸入 6 碼) -->
     <FetchSongModal
       :show="showFetchModal"
       @import-success="handleCloudImportSuccess"
       @close="showFetchModal = false"
     />
 
-    <!-- Google Material Icons 挑選開窗元件 -->
+    <!-- 圖示挑選開窗 -->
     <IconPickerModal
       :show="showIconPicker"
       :modelValue="iconPickerTarget === 'add' ? newIcon : editIcon"
@@ -1095,131 +1282,93 @@ async function playAllSequentially() {
 </template>
 
 <style scoped>
-.app-layout {
+/* 全域版面架構 */
+.app-container {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  position: relative;
 }
 
 /* 頂部導航列 */
 .app-header {
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border);
-  padding: 1rem 2rem;
+  border-bottom: 2px solid #f1f5f9;
+  padding: 0.85rem 1.5rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
   position: sticky;
   top: 0;
   z-index: 50;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.05);
 }
 
 .header-brand {
   display: flex;
   align-items: center;
-  gap: 0.85rem;
+  gap: 0.75rem;
+  cursor: pointer;
+  user-select: none;
 }
 
-.brand-symbol {
+.brand-mascot {
   font-size: 2.2rem;
-  color: #6366f1;
-  background: #eef2ff;
-  border-radius: var(--radius-md);
-  padding: 0.3rem;
-  box-shadow: var(--shadow-sm);
+  display: inline-block;
+  animation: kid-bounce 2s infinite ease-in-out;
 }
 
-.brand-text h1 {
-  font-size: 1.4rem;
+.app-title {
+  font-size: 1.35rem;
   font-weight: 800;
   color: #1e1b4b;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
 }
 
-.subtitle {
-  font-size: 0.85rem;
-  color: var(--text-muted);
+.app-tagline {
+  font-size: 0.78rem;
+  color: #64748b;
+  font-weight: 600;
 }
 
 .header-actions {
   display: flex;
-  gap: 0.75rem;
+  align-items: center;
+  gap: 0.65rem;
 }
 
 /* 按鈕風格 */
-.btn {
-  padding: 0.6rem 1.2rem;
+.btn-pill {
   border-radius: var(--radius-full);
-  font-size: 0.95rem;
-  font-weight: 600;
+  padding: 0.55rem 1.15rem;
+  font-weight: 700;
+  font-size: 0.92rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid transparent;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.btn-icon-inline {
-  font-size: 1.2rem;
-  vertical-align: middle;
-}
-
-.btn-primary {
+.btn-primary-bounce {
   background: linear-gradient(135deg, #6366f1, #4f46e5);
   color: white;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
 }
-.btn-primary:hover {
+.btn-primary-bounce:hover {
   background: linear-gradient(135deg, #4f46e5, #4338ca);
+  transform: translateY(-2px);
 }
 
 .btn-secondary {
   background: #f1f5f9;
   color: #334155;
-  border: 1px solid #cbd5e1;
+  border-color: #cbd5e1;
 }
 .btn-secondary:hover {
   background: #e2e8f0;
-}
-
-.btn-accent {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  color: white;
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.35);
-}
-.btn-accent:hover {
-  background: linear-gradient(135deg, #d97706, #b45309);
-}
-
-.btn-playing {
-  background: linear-gradient(135deg, #10b981, #059669);
-  color: white;
-  animation: pulse-border 2s infinite;
-}
-
-.btn-outline {
-  background: white;
-  border: 1px solid #cbd5e1;
-  color: #334155;
-}
-.btn-outline:hover {
-  background: #f8fafc;
-}
-
-.btn-outline-yt {
-  background: #fee2e2;
-  border: 1px solid #fca5a5;
-  color: #dc2626;
-}
-.btn-outline-yt:hover {
-  background: #fecaca;
-}
-
-.btn-outline-cloud {
-  background: #f0fdf4;
-  border: 1px solid #86efac;
-  color: #15803d;
-}
-.btn-outline-cloud:hover {
-  background: #dcfce7;
-  color: #166534;
 }
 
 .btn-ghost {
@@ -1230,41 +1379,141 @@ async function playAllSequentially() {
   background: #f1f5f9;
 }
 
-.btn-danger {
-  background: #ef4444;
+.btn-success {
+  background: linear-gradient(135deg, #10b981, #059669);
   color: white;
-}
-
-.btn-danger-action {
-  background: #fee2e2;
-  color: #b91c1c;
-  border: 1px solid #fca5a5;
-}
-.btn-danger-action:hover {
-  background: #fecaca;
-  color: #991b1b;
 }
 
 .btn-icon {
   background: transparent;
-  font-size: 1.2rem;
+  border: none;
+  font-size: 1.3rem;
   color: #64748b;
-  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  padding: 0.3rem 0.6rem;
+  border-radius: 8px;
+}
+.btn-icon:hover {
+  background: #f1f5f9;
 }
 
-/* 語音設定面板 */
+/* 行動版歌單按鈕 */
+.btn-song-drawer-trigger {
+  display: none;
+  background: #eff6ff;
+  color: #2563eb;
+  border-color: #bfdbfe;
+}
+
+/* 家長專區折疊選單 */
+.parent-dropdown {
+  position: relative;
+}
+.btn-parent-toggle {
+  background: #fefce8;
+  border-color: #fef08a;
+  color: #854d0e;
+}
+.btn-parent-toggle:hover {
+  background: #fef9c3;
+}
+.dropdown-arrow {
+  font-size: 1.2rem;
+  margin-left: -0.2rem;
+}
+
+.parent-menu-sheet {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.16);
+  min-width: 250px;
+  padding: 0.6rem;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  animation: scale-up 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.menu-title {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #94a3b8;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 0.2rem;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+.menu-item:hover {
+  background: #f8fafc;
+  transform: translateX(3px);
+}
+.menu-icon {
+  font-size: 1.6rem;
+}
+.menu-item-text {
+  display: flex;
+  flex-direction: column;
+}
+.menu-item-text strong {
+  font-size: 0.95rem;
+  color: #1e293b;
+}
+.menu-item-text small {
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.text-indigo { color: #6366f1; }
+.text-amber { color: #f59e0b; }
+.text-emerald { color: #10b981; }
+.text-blue { color: #2563eb; }
+.text-danger { color: #ef4444; }
+
+/* 語音設定滑出面板 */
 .settings-drawer {
   background: #ffffff;
-  border-bottom: 2px solid #e2e8f0;
-  box-shadow: var(--shadow-md);
+  border-bottom: 3px solid #e0e7ff;
+  box-shadow: var(--shadow-lg);
   padding: 1.25rem 2rem;
-  animation: slide-down 0.3s ease-out;
+  animation: slide-down 0.25s ease-out;
+}
+.settings-drawer-inner {
+  max-width: 1360px;
+  margin: 0 auto;
 }
 .settings-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
+  margin-bottom: 1.2rem;
+}
+.drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #1e1b4b;
+}
+.drawer-title .title-icon {
+  font-size: 1.7rem;
+  color: #6366f1;
 }
 .settings-header-actions {
   display: flex;
@@ -1275,127 +1524,133 @@ async function playAllSequentially() {
   font-size: 0.85rem;
   color: #059669;
   background: #d1fae5;
-  padding: 0.25rem 0.6rem;
+  padding: 0.3rem 0.75rem;
   border-radius: var(--radius-full);
   font-weight: 700;
-  animation: fade-in 0.2s ease-out;
 }
 .btn-sm {
-  padding: 0.4rem 0.9rem;
-  font-size: 0.85rem;
-}
-.drawer-title {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: #1e293b;
+  padding: 0.45rem 0.95rem;
+  font-size: 0.88rem;
 }
 .settings-body {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1.5rem;
 }
 .label-with-val {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.4rem;
 }
 .badge {
   background: #e0e7ff;
   color: #4338ca;
-  padding: 0.1rem 0.5rem;
-  border-radius: 9999px;
-  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radius-full);
+  font-size: 0.82rem;
   font-weight: 700;
 }
 .range-slider {
   width: 100%;
-  accent-color: var(--primary);
+  height: 8px;
+  accent-color: #6366f1;
+  cursor: pointer;
 }
 
-/* 主畫面版面 */
-.app-main {
+/* 主體兩欄佈局 */
+.main-layout {
   display: flex;
   flex: 1;
-  max-width: 1400px;
+  max-width: 1420px;
   margin: 0 auto;
   width: 100%;
   padding: 1.5rem;
-  gap: 1.5rem;
+  gap: 1.75rem;
 }
 
-/* 側邊歌單欄 */
-.sidebar {
-  width: 330px;
+/* 左側桌面歌單欄 */
+.desktop-sidebar {
+  width: 340px;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(8px);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
+  border-radius: 20px;
+  border: 2px solid #e2e8f0;
   box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  height: calc(100vh - 120px);
+  height: calc(100vh - 125px);
+  position: sticky;
+  top: 90px;
 }
 .sidebar-header {
-  padding: 1.1rem 1.25rem;
-  border-bottom: 1px solid var(--border);
+  padding: 1.25rem 1.4rem;
+  border-bottom: 2px solid #f1f5f9;
 }
-.sidebar-title-wrap {
+.sidebar-title-row {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
 }
 .sidebar-header h2 {
-  font-size: 1.15rem;
-  color: #334155;
+  font-size: 1.2rem;
+  color: #1e293b;
+  font-weight: 800;
+}
+.song-count-pill {
+  font-size: 0.82rem;
   font-weight: 700;
+  color: #4f46e5;
+  background: #e0e7ff;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
 }
 .drag-hint {
-  font-size: 0.75rem;
+  display: block;
+  font-size: 0.78rem;
   color: #94a3b8;
+  margin-top: 0.3rem;
   font-weight: 500;
 }
 
-.song-list {
+.desktop-song-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0.75rem;
+  padding: 0.85rem;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 
-.song-item {
+.song-item-card {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.65rem;
   padding: 0.75rem 0.85rem;
-  border-radius: var(--radius-md);
+  border-radius: 14px;
   cursor: pointer;
   background: white;
-  border: 2px solid transparent;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 2px solid #f1f5f9;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   user-select: none;
 }
-.song-item:hover {
+.song-item-card:hover {
   background: #f8fafc;
   border-color: #cbd5e1;
   transform: translateX(3px);
 }
-.song-item.active {
-  background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+.song-item-card.active {
+  background: linear-gradient(135deg, #eef2ff, #f5f3ff);
   border-color: #818cf8;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.18);
 }
-
-/* 拖曳狀態樣式 */
-.song-item.is-dragging {
+.song-item-card.is-dragging {
   opacity: 0.4;
-  transform: scale(0.98);
+  transform: scale(0.97);
 }
-.song-item.drag-over {
+.song-item-card.drag-over {
   border-color: #6366f1;
   background: #f5f3ff;
   border-style: dashed;
@@ -1403,18 +1658,17 @@ async function playAllSequentially() {
 
 .drag-handle {
   color: #94a3b8;
-  font-size: 1.25rem;
+  font-size: 1.3rem;
   cursor: grab;
-  transition: color 0.2s;
 }
-.song-item:hover .drag-handle {
+.song-item-card:hover .drag-handle {
   color: #6366f1;
 }
 
-.song-item-icon-box {
-  width: 44px;
-  height: 44px;
-  border-radius: 8px;
+.song-item-thumb-box {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
   background: #eef2ff;
   display: flex;
   align-items: center;
@@ -1423,149 +1677,190 @@ async function playAllSequentially() {
   overflow: hidden;
   border: 1px solid #e2e8f0;
 }
-.song-item-icon-box.is-thumb {
-  background: #0f172a;
-  border-color: #cbd5e1;
-}
-.song-item-thumb {
+.thumb-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
 }
-.song-icon {
-  font-size: 1.35rem;
-  color: #4f46e5;
+.item-icon {
+  font-size: 1.5rem;
+  color: #6366f1;
 }
 
-.song-item-info {
+.song-item-meta {
   flex: 1;
   min-width: 0;
 }
-.song-item-title {
-  font-weight: 600;
+.song-name {
+  font-weight: 700;
   font-size: 0.95rem;
   color: #1e293b;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  line-height: 1.35;
 }
-.yt-badge {
-  font-size: 0.7rem;
+.yt-pill {
+  font-size: 0.68rem;
+  font-weight: 700;
   color: #dc2626;
   background: #fee2e2;
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
-  font-weight: 700;
-}
-.empty-songs {
-  padding: 2rem 1rem;
-  text-align: center;
-  color: #94a3b8;
-  font-size: 0.9rem;
 }
 
-/* 內容區 */
-.content-area {
+.reorder-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.btn-arrow {
+  background: #f1f5f9;
+  border: none;
+  font-size: 0.65rem;
+  color: #64748b;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+.btn-arrow:hover:not(:disabled) {
+  background: #6366f1;
+  color: white;
+}
+.btn-arrow:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.empty-song-box {
+  padding: 3rem 1.5rem;
+  text-align: center;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+.empty-icon-sm {
+  font-size: 2.5rem;
+  color: #cbd5e1;
+}
+
+/* 右側主舞台 */
+.reading-stage {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.5rem;
   min-width: 0;
 }
 
-.song-header-card {
+/* 歌曲頭部卡片 */
+.song-hero-card {
   background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(8px);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
-  padding: 1.5rem;
+  backdrop-filter: blur(10px);
+  border-radius: 24px;
+  border: 2px solid #e2e8f0;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.05);
+  padding: 1.75rem;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.4rem;
 }
 
-.song-title-row {
+.hero-header-row {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 1rem;
+  gap: 1.25rem;
   flex-wrap: wrap;
 }
 
-.song-identity {
+.hero-identity {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 1.25rem;
   flex: 1;
-  min-width: 250px;
+  min-width: 260px;
 }
 
-.current-song-icon-box {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
+.hero-icon-box {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
   background: #eef2ff;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
-  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+  border: 2px solid #e2e8f0;
 }
-.current-song-icon-box.has-thumb {
-  background: #0f172a;
-}
-.current-song-thumb-img {
+.hero-thumb-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
+}
+.hero-icon {
+  font-size: 2.5rem;
+  color: #6366f1;
 }
 
-.current-song-icon {
-  font-size: 2.2rem;
-  color: #4f46e5;
+.hero-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
-
-.current-title {
-  font-size: 1.6rem;
+.hero-tag {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #6366f1;
+  background: #eef2ff;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  width: fit-content;
+}
+.hero-song-title {
+  font-size: 1.75rem;
   font-weight: 800;
   color: #0f172a;
   line-height: 1.3;
-}
-.current-url {
-  font-size: 0.85rem;
-  color: #64748b;
-  margin-top: 0.35rem;
-}
-.current-url a {
-  color: #6366f1;
-  text-decoration: none;
-  word-break: break-all;
-}
-.current-url a:hover {
-  text-decoration: underline;
+  letter-spacing: -0.01em;
 }
 
-.song-action-buttons {
+.hero-action-buttons {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.65rem;
   align-items: center;
   flex-wrap: wrap;
 }
 
-/* 更多操作摺疊下拉選單 */
+.btn-video-toggle {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #dc2626;
+}
+.btn-video-toggle:hover {
+  background: #fecaca;
+  transform: translateY(-2px);
+}
+
+.btn-outline-manage {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #475569;
+}
+.btn-outline-manage:hover {
+  background: #eef2ff;
+  border-color: #818cf8;
+}
+
+/* 更多操作下拉選單 */
 .action-dropdown {
   position: relative;
-}
-.btn-menu-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
 }
 .dropdown-menu {
   position: absolute;
@@ -1573,311 +1868,404 @@ async function playAllSequentially() {
   right: 0;
   background: white;
   border: 1px solid #e2e8f0;
-  border-radius: var(--radius-md);
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
-  min-width: 180px;
-  padding: 0.4rem;
+  border-radius: 14px;
+  box-shadow: 0 16px 30px -4px rgba(0, 0, 0, 0.15);
+  min-width: 185px;
+  padding: 0.45rem;
   z-index: 70;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  animation: fade-in 0.15s ease-out;
+  gap: 0.25rem;
+  animation: scale-up 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .dropdown-item {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.65rem;
   width: 100%;
-  padding: 0.65rem 0.9rem;
+  padding: 0.7rem 0.9rem;
   border: none;
   background: transparent;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  font-weight: 500;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  font-weight: 600;
   color: #334155;
   cursor: pointer;
   text-align: left;
-  transition: background 0.15s;
+  transition: all 0.15s;
 }
 .dropdown-item:hover {
   background: #f1f5f9;
 }
-.dropdown-item.text-danger {
-  color: #dc2626;
-}
 .dropdown-item.text-danger:hover {
   background: #fee2e2;
-}
-.dropdown-icon {
-  font-size: 1.2rem;
+  color: #b91c1c;
 }
 .dropdown-divider {
   height: 1px;
-  background: #e2e8f0;
-  margin: 0.25rem 0;
+  background: #f1f5f9;
+  margin: 0.2rem 0;
 }
 
-/* YouTube 嵌入播放器 */
-.video-embed-container {
+/* YouTube 影片區 (16:9 響應式) */
+.video-container {
   width: 100%;
-  max-width: 640px;
+  max-width: 720px;
   aspect-ratio: 16 / 9;
-  border-radius: var(--radius-md);
+  border-radius: 18px;
   overflow: hidden;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   background: #000;
+  align-self: center;
 }
-.video-embed-container iframe {
+.video-container iframe {
   width: 100%;
   height: 100%;
 }
 
-/* 播放狀態與全局控制列 */
-.play-toolbar {
+/* 巨型幼童友善主控台 */
+.giant-kid-controller {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 2px dashed #e2e8f0;
+}
+
+.primary-controls {
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
 
-.play-status-tip {
+/* 專為 5~6 歲小孩設計的超大朗讀按鈕 */
+.btn-giant-play {
+  padding: 0.85rem 2rem;
+  border-radius: 9999px;
+  font-size: 1.15rem;
+  font-weight: 800;
+  box-shadow: 0 8px 20px -2px rgba(99, 102, 241, 0.35);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 58px;
+}
+.btn-giant-play.is-ready {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  box-shadow: 0 8px 20px -2px rgba(16, 185, 129, 0.4);
+}
+.btn-giant-play.is-ready:hover {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  transform: translateY(-2px);
+}
+.btn-giant-play.is-playing {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: white;
+  animation: glow-pulse 1.8s infinite;
+  box-shadow: 0 8px 20px -2px rgba(245, 158, 11, 0.4);
+}
+.giant-icon {
+  font-size: 2rem;
+}
+.giant-text {
+  letter-spacing: 0.02em;
+}
+
+.btn-giant-stop {
+  padding: 0.85rem 1.6rem;
+  border-radius: 9999px;
+  background: #fee2e2;
+  color: #dc2626;
+  border: 2px solid #fca5a5;
+  font-size: 1.05rem;
+  font-weight: 800;
+  min-height: 58px;
+}
+.btn-giant-stop:hover {
+  background: #fecaca;
+  transform: translateY(-2px);
+}
+
+/* 友善狀態氣泡 */
+.kid-status-bubble {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.95rem;
+  gap: 0.6rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1e1b4b;
+  background: linear-gradient(135deg, #eef2ff, #faf5ff);
+  border: 1px solid #c7d2fe;
+  padding: 0.65rem 1.25rem;
+  border-radius: 9999px;
+  width: fit-content;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.08);
+}
+.kid-status-bubble.muted {
+  background: #fefce8;
+  border-color: #fef08a;
+  color: #854d0e;
+}
+.kid-status-bubble.initial {
+  background: #f8fafc;
+  border-color: #e2e8f0;
   color: #475569;
-  background: #f1f5f9;
-  padding: 0.4rem 0.85rem;
-  border-radius: var(--radius-full);
+}
+.pulse-sparkle {
+  font-size: 1.25rem;
+  display: inline-block;
+  animation: kid-bounce 1.5s infinite;
 }
 
-.pulse-dot {
-  width: 10px;
-  height: 10px;
-  background: #10b981;
-  border-radius: 50%;
-  animation: pulse 1.5s infinite;
+/* 歌詞卡片清單 */
+.lyrics-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-bottom: 5rem;
 }
 
-/* 檢視模式：段落卡片 */
-.lyrics-view-container {
+/* 幼童大段落卡片 */
+.kid-paragraph-box {
+  background: white;
+  border-radius: 22px;
+  border: 2px solid #e2e8f0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+  padding: 1.75rem;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
-  padding-bottom: 3rem;
-}
-
-.paragraph-card {
-  background: white;
-  border-radius: var(--radius-lg);
-  border: 2px solid #e2e8f0;
-  box-shadow: var(--shadow-sm);
-  display: flex;
-  padding: 1.5rem;
-  gap: 1.5rem;
-  transition: all 0.25s ease;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   position: relative;
 }
-
-.paragraph-card:hover {
+.kid-paragraph-box:hover {
   border-color: #cbd5e1;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
-/* 正在播放的段落高亮 */
-.paragraph-card.is-active {
+/* 當前朗讀中的段落 (超級亮眼、有音波動畫) */
+.kid-paragraph-box.is-active {
   border-color: #6366f1;
   background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
-  box-shadow: 0 8px 25px rgba(99, 102, 241, 0.2);
-  transform: scale(1.01);
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25), 0 12px 32px rgba(99, 102, 241, 0.18);
+  transform: scale(1.015);
 }
 
-/* 上次播放過的段落標記 */
-.paragraph-card.is-last-played {
-  border-color: #fbbf24;
-  background: linear-gradient(135deg, #ffffff 0%, #fffbeb 100%);
+/* 上次播放過的段落 */
+.kid-paragraph-box.is-last-played {
+  border-color: #f59e0b;
+  background: linear-gradient(135deg, #ffffff 0%, #fefce8 100%);
 }
 
-.paragraph-sidebar {
+.para-card-header {
   display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  align-items: flex-start;
-  min-width: 140px;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 0.85rem;
 }
 
-.paragraph-badge {
-  font-size: 0.8rem;
-  font-weight: 700;
-  color: #64748b;
+.para-badge-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.para-emoji {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+.para-title-text {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #334155;
+}
+
+/* 單段播放按鈕 */
+.btn-para-play {
   background: #f1f5f9;
-  padding: 0.2rem 0.6rem;
-  border-radius: 6px;
-}
-
-.btn-play-para {
-  padding: 0.5rem 0.9rem;
-  background: #f8fafc;
-  border: 1px solid #cbd5e1;
-  border-radius: var(--radius-full);
-  font-size: 0.85rem;
-  font-weight: 600;
   color: #1e293b;
+  border-color: #cbd5e1;
+  padding: 0.55rem 1.25rem;
+  font-size: 0.95rem;
+  min-height: 46px;
 }
-
-.btn-play-para:hover {
+.btn-para-play:hover {
   background: #6366f1;
   color: white;
   border-color: #6366f1;
+  transform: translateY(-2px);
 }
-
-.btn-play-para.para-playing {
+.btn-para-play.is-reading {
   background: #ef4444;
   color: white;
   border-color: #ef4444;
-  animation: pulse-border 1.5s infinite;
+  animation: glow-pulse 1.5s infinite;
 }
 
-.paragraph-text-wrapper {
-  flex: 1;
+/* 歌詞文字 (超大、清晰、大行高) */
+.para-card-body {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 1rem;
 }
-
-.paragraph-text {
-  font-size: 1.35rem;
-  line-height: 1.8;
+.lyrics-text {
+  font-size: 1.6rem;
+  line-height: 1.9;
   font-weight: 600;
   color: #1e293b;
   letter-spacing: 0.03em;
   white-space: pre-wrap;
 }
-
 .lyric-line {
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.35rem;
 }
 
-.paragraph-indicator {
+/* 音波動畫與提示 */
+.para-indicator {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-top: 1rem;
-  font-size: 0.85rem;
+  gap: 0.75rem;
+  font-size: 0.92rem;
   font-weight: 700;
   color: #6366f1;
+  background: #eef2ff;
+  padding: 0.5rem 1rem;
+  border-radius: 9999px;
+  width: fit-content;
 }
-.paragraph-indicator.last-mark {
-  color: #d97706;
+.para-indicator.completed {
+  color: #15803d;
+  background: #dcfce7;
 }
 
-/* 音波動畫 */
-.sound-wave {
+.kid-sound-wave {
   display: inline-flex;
-  gap: 3px;
+  gap: 4px;
   align-items: flex-end;
-  height: 14px;
+  height: 16px;
 }
-.sound-wave span {
-  width: 3px;
-  background-color: #6366f1;
+.kid-sound-wave span {
+  width: 4px;
+  background: #6366f1;
   border-radius: 2px;
-  animation: sound-wave-bar 1s infinite ease-in-out;
+  animation: wave-bar 0.9s infinite ease-in-out;
 }
-.sound-wave span:nth-child(1) { height: 6px; animation-delay: 0s; }
-.sound-wave span:nth-child(2) { height: 14px; animation-delay: 0.2s; }
-.sound-wave span:nth-child(3) { height: 10px; animation-delay: 0.4s; }
-.sound-wave span:nth-child(4) { height: 8px; animation-delay: 0.1s; }
+.kid-sound-wave span:nth-child(1) { height: 6px; animation-delay: 0s; }
+.kid-sound-wave span:nth-child(2) { height: 16px; animation-delay: 0.15s; }
+.kid-sound-wave span:nth-child(3) { height: 10px; animation-delay: 0.3s; }
+.kid-sound-wave span:nth-child(4) { height: 14px; animation-delay: 0.45s; }
+.kid-sound-wave span:nth-child(5) { height: 8px; animation-delay: 0.2s; }
 
-/* 編輯區 */
+@keyframes wave-bar {
+  0%, 100% { height: 5px; }
+  50% { height: 16px; }
+}
+
+.no-lyrics-card {
+  background: white;
+  padding: 3rem 1.5rem;
+  border-radius: 20px;
+  border: 2px dashed #cbd5e1;
+  text-align: center;
+  color: #64748b;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+.no-lyrics-icon {
+  font-size: 3.5rem;
+  color: #a5b4fc;
+}
+
+/* 編輯區卡片 */
 .edit-card {
   background: white;
   padding: 2rem;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
+  border-radius: 22px;
+  border: 2px solid #e2e8f0;
   box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.4rem;
 }
 .edit-hint-banner {
   background: #eff6ff;
   border: 1px solid #bfdbfe;
   color: #1e40af;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-md);
+  padding: 0.85rem 1.25rem;
+  border-radius: 12px;
   font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 /* 表單元件 */
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.45rem;
 }
 .form-group label {
   font-weight: 700;
-  font-size: 0.9rem;
-  color: #334155;
+  font-size: 0.92rem;
+  color: #1e293b;
 }
 .form-control {
-  padding: 0.75rem 1rem;
-  border: 1px solid #cbd5e1;
-  border-radius: var(--radius-md);
-  font-size: 1rem;
+  padding: 0.8rem 1.15rem;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 1.05rem;
   outline: none;
   font-family: inherit;
-  transition: border-color 0.2s;
+  transition: all 0.2s;
 }
 .form-control:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  border-color: #6366f1;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
 }
 .lyrics-textarea {
   resize: vertical;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 .input-with-button {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 .input-with-button .form-control {
   flex: 1;
 }
 
-/* 圖示選擇器區域 */
+/* 圖示欄位 */
 .icon-selector-field {
   display: flex;
   align-items: center;
   gap: 1rem;
 }
 .selected-icon-preview {
-  width: 52px;
-  height: 52px;
-  border-radius: 12px;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
   background: #f8fafc;
-  border: 1px solid #cbd5e1;
+  border: 2px solid #cbd5e1;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #4f46e5;
+  color: #6366f1;
   overflow: hidden;
   flex-shrink: 0;
 }
 .selected-icon-preview .material-symbols-outlined {
-  font-size: 1.8rem;
+  font-size: 2rem;
 }
 .selected-icon-preview .placeholder-icon {
-  font-size: 1.8rem;
   color: #94a3b8;
 }
 .preview-thumb-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
 }
 .icon-field-actions {
   display: flex;
@@ -1887,15 +2275,214 @@ async function playAllSequentially() {
 }
 
 .tip {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   color: #64748b;
 }
 .error-tip {
-  font-size: 0.8rem;
-  color: #ef4444;
+  font-size: 0.85rem;
+  color: #dc2626;
+  font-weight: 600;
 }
 
-/* Modal 彈窗 */
+/* 行動/平板專屬：底部常駐浮動迷你播放列 */
+.mobile-bottom-dock {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(16px);
+  border-top: 2px solid #e0e7ff;
+  box-shadow: 0 -8px 25px rgba(0, 0, 0, 0.12);
+  padding: 0.75rem 1.25rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  z-index: 60;
+  animation: slide-up 0.25s ease-out;
+}
+.dock-inner {
+  max-width: 600px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.dock-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.dock-title {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #1e1b4b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dock-status {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #6366f1;
+}
+.dock-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-dock-play {
+  border-radius: 9999px;
+  padding: 0.65rem 1.4rem;
+  font-size: 1rem;
+  font-weight: 800;
+  min-height: 48px;
+}
+.btn-dock-stop {
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1px solid #fca5a5;
+  padding: 0;
+  justify-content: center;
+}
+
+/* 行動版歌庫抽屜 (Bottom Sheet) */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 120;
+  display: flex;
+  justify-content: flex-end;
+  animation: fade-in 0.2s ease-out;
+}
+.drawer-sheet {
+  background: white;
+  width: 100%;
+  max-width: 420px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.2);
+  animation: slide-left 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.drawer-sheet-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 2px solid #f1f5f9;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sheet-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.sheet-icon {
+  font-size: 1.6rem;
+  color: #6366f1;
+}
+.drawer-sheet-header h3 {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+.drawer-sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.sheet-song-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 14px;
+  border: 2px solid #f1f5f9;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.sheet-song-item.active {
+  background: #eef2ff;
+  border-color: #818cf8;
+}
+.sheet-thumb-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #eef2ff;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.sheet-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sheet-item-icon {
+  font-size: 1.4rem;
+  color: #6366f1;
+}
+.sheet-song-meta {
+  flex: 1;
+  min-width: 0;
+}
+.sheet-song-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #1e293b;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.sheet-current-badge {
+  font-size: 0.7rem;
+  color: #4f46e5;
+  background: #e0e7ff;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-weight: 700;
+}
+.sheet-reorder-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.btn-sheet-arrow {
+  background: #f1f5f9;
+  border: none;
+  font-size: 0.7rem;
+  color: #64748b;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-sheet-arrow:disabled {
+  opacity: 0.3;
+}
+.drawer-sheet-footer {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+.btn-block {
+  width: 100%;
+  justify-content: center;
+}
+
+/* Modal 彈窗樣式 */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1904,22 +2491,25 @@ async function playAllSequentially() {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: 140;
   padding: 1rem;
   animation: fade-in 0.2s ease-out;
 }
 .modal-card {
   background: white;
   width: 100%;
-  max-width: 600px;
-  border-radius: var(--radius-lg);
+  max-width: 580px;
+  border-radius: 20px;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   animation: scale-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
 }
 .modal-header {
   padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 2px solid #f1f5f9;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1927,26 +2517,23 @@ async function playAllSequentially() {
 .modal-header .title-wrap {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-}
-.modal-header .header-icon {
-  color: #6366f1;
+  gap: 0.6rem;
 }
 .modal-header h3 {
-  font-size: 1.2rem;
+  font-size: 1.25rem;
   color: #0f172a;
+  font-weight: 800;
 }
 .modal-body {
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  max-height: 75vh;
+  gap: 1.1rem;
   overflow-y: auto;
 }
 .modal-footer {
   padding: 1rem 1.5rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid #e2e8f0;
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
@@ -1956,49 +2543,63 @@ async function playAllSequentially() {
   background: #fefce8;
   border: 1px solid #fef08a;
   color: #854d0e;
-  padding: 0.75rem;
-  border-radius: var(--radius-md);
-  font-size: 0.85rem;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  font-size: 0.88rem;
   line-height: 1.5;
 }
 
-.empty-state {
-  display: flex;
+/* 空白首頁大卡片 */
+.empty-stage {
   align-items: center;
   justify-content: center;
+  min-height: 60vh;
 }
-.empty-box {
+.empty-welcome-card {
   text-align: center;
   background: white;
-  padding: 3rem 2rem;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  max-width: 500px;
+  padding: 3.5rem 2rem;
+  border-radius: 28px;
+  border: 2px solid #e2e8f0;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
 }
-.empty-icon {
-  font-size: 3rem;
-  margin-bottom: 1rem;
+.welcome-mascot {
+  font-size: 4rem;
   display: inline-block;
-  color: #f59e0b;
+  animation: kid-bounce 2s infinite ease-in-out;
+}
+.empty-welcome-card h2 {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #1e1b4b;
+}
+.empty-welcome-card p {
+  color: #64748b;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+.btn-lg {
+  padding: 0.85rem 1.75rem;
+  font-size: 1.05rem;
 }
 
-/* 動畫 */
-@keyframes sound-wave-bar {
-  0%, 100% { height: 4px; }
-  50% { height: 16px; }
-}
-@keyframes pulse {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-  70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-}
-@keyframes pulse-border {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.5); }
-  50% { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
-}
+/* 動畫定義 */
 @keyframes slide-down {
-  from { opacity: 0; transform: translateY(-10px); }
+  from { opacity: 0; transform: translateY(-12px); }
   to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-left {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }
 @keyframes fade-in {
   from { opacity: 0; }
@@ -2009,24 +2610,117 @@ async function playAllSequentially() {
   to { opacity: 1; transform: scale(1); }
 }
 
-/* 響應式佈局適應行動裝置或平板 */
-@media (max-width: 860px) {
-  .app-main {
+/* ========================================================
+   響應式設計 (RWD) 斷點設定：平板與手機適配
+   ======================================================== */
+
+/* 1. 平板與行動裝置 (<= 1024px) */
+@media (max-width: 1024px) {
+  .main-layout {
     flex-direction: column;
     padding: 1rem;
+    gap: 1.25rem;
   }
-  .sidebar {
-    width: 100%;
-    height: auto;
-    max-height: 280px;
+  /* 隱藏桌機左側欄，改用頂部「歌單」按鈕開啟抽屜切換歌曲 */
+  .desktop-sidebar {
+    display: none;
   }
-  .paragraph-card {
-    flex-direction: column;
+  .btn-song-drawer-trigger {
+    display: inline-flex;
+  }
+  .mobile-bottom-dock {
+    display: block;
+  }
+  /* 行動版面：固定展開 YouTube 播放器，隱藏開闔按鈕、小縮圖與「正在練習歌曲」標籤，僅保留標題與管理按鈕 */
+  .hero-icon-box,
+  .hero-tag,
+  .btn-video-toggle {
+    display: none;
+  }
+  .hero-header-row {
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .hero-identity {
+    min-width: 0;
+  }
+}
+
+/* 2. 手機螢幕 (<= 640px) */
+@media (max-width: 640px) {
+  .app-header {
+    padding: 0.75rem 1rem;
+  }
+  .brand-mascot {
+    font-size: 1.8rem;
+  }
+  .app-title {
+    font-size: 1.15rem;
+  }
+  .app-tagline {
+    display: none;
+  }
+  .parent-label {
+    display: none;
+  }
+  .btn-parent-toggle {
+    padding: 0.45rem 0.65rem;
+  }
+  .hero-song-title {
+    font-size: 1.35rem;
+  }
+  .song-hero-card {
+    padding: 1.15rem;
+    border-radius: 18px;
     gap: 1rem;
   }
-  .paragraph-sidebar {
-    flex-direction: row;
-    justify-content: space-between;
+  .btn-giant-play {
+    width: 100%;
+    justify-content: center;
+    font-size: 1.05rem;
+    padding: 0.75rem 1.25rem;
+  }
+  .btn-giant-stop {
+    width: 100%;
+    justify-content: center;
+  }
+  .kid-paragraph-box {
+    padding: 1.15rem;
+    border-radius: 18px;
+    gap: 1rem;
+  }
+  .lyrics-text {
+    font-size: 1.35rem;
+    line-height: 1.8;
+  }
+  .para-card-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .settings-drawer {
+    padding: 1rem;
+  }
+  .settings-body {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .modal-card {
+    border-radius: 16px;
+    max-height: 90vh;
+  }
+  .modal-header, .modal-body, .modal-footer {
+    padding: 1rem;
+  }
+  .input-with-button {
+    flex-direction: column;
+  }
+  .input-with-button .btn {
+    width: 100%;
+  }
+  .modal-footer {
+    flex-direction: column-reverse;
+  }
+  .modal-footer .btn {
     width: 100%;
   }
 }

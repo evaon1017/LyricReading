@@ -3,37 +3,61 @@
   --primary-hover: #4f46e5;
   --primary-light: #e0e7ff;
   --secondary: #ec4899;
+  --secondary-light: #fce7f3;
   --accent: #f59e0b;
+  --accent-light: #fef3c7;
   --success: #10b981;
-  --background: #f8fafc;
+  --success-light: #d1fae5;
+  --danger: #ef4444;
+  --danger-light: #fee2e2;
+  --sky: #0ea5e9;
+  --sky-light: #e0f2fe;
+
+  --background: #fdfbf7;
   --surface: #ffffff;
-  --surface-alt: #f1f5f9;
+  --surface-alt: #f8fafc;
   --text-main: #1e293b;
   --text-muted: #64748b;
   --border: #e2e8f0;
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+
+  --shadow-sm: 0 2px 4px 0 rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 6px 16px -2px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 14px 28px -4px rgba(0, 0, 0, 0.1);
+  --shadow-kid: 0 8px 24px -4px rgba(99, 102, 241, 0.18);
+
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
   --radius-full: 9999px;
-  --font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+
+  --font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
 }
 
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
 }
 
 body {
   font-family: var(--font-family);
-  background: linear-gradient(135deg, #f0fdf4 0%, #e0f2fe 50%, #fef3c7 100%);
+  background: radial-gradient(circle at 10% 20%, #fef3c7 0%, transparent 25%),
+              radial-gradient(circle at 90% 15%, #e0e7ff 0%, transparent 30%),
+              radial-gradient(circle at 80% 80%, #d1fae5 0%, transparent 35%),
+              radial-gradient(circle at 15% 85%, #fce7f3 0%, transparent 30%),
+              linear-gradient(135deg, #fdfbf7 0%, #f1f5f9 100%);
   min-height: 100vh;
   color: var(--text-main);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* 圓潤友善的按鈕設計 */
@@ -42,7 +66,7 @@ button {
   cursor: pointer;
   border: none;
   outline: none;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -51,7 +75,7 @@ button {
 }
 
 button:active {
-  transform: scale(0.97);
+  transform: scale(0.95);
 }
 
 /* 滾動條美化 */
@@ -64,8 +88,29 @@ button:active {
 }
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 4px;
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* 專為幼童互動設計的動畫 */
+@keyframes kid-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes kid-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-5deg); }
+  75% { transform: rotate(5deg); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
+  }
 }
