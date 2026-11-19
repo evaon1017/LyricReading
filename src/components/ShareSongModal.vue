@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { uploadSongShare } from '../utils/firebaseService';
+import { buildShareMessage, copyTextToClipboard } from '../utils/songHelper';
 import type { Song } from '../types';
 
 const props = defineProps<{
@@ -16,6 +17,22 @@ const isUploading = ref<boolean>(false);
 const shareCode = ref<string>('');
 const errorMsg = ref<string>('');
 const isCopied = ref<boolean>(false);
+
+const shareMessage = computed(() => {
+  if (!shareCode.value || !props.song) return '';
+  return buildShareMessage(shareCode.value, [props.song]);
+});
+
+watch(
+  () => [props.show, props.song?.id],
+  ([isOpen]) => {
+    if (isOpen) {
+      shareCode.value = '';
+      errorMsg.value = '';
+      isCopied.value = false;
+    }
+  }
+);
 
 async function handleStartShare() {
   if (!props.song) return;
@@ -35,14 +52,18 @@ async function handleStartShare() {
   }
 }
 
-function copyCode() {
-  if (!shareCode.value) return;
-  navigator.clipboard.writeText(shareCode.value).then(() => {
+async function copyCode() {
+  if (!shareMessage.value) return;
+  try {
+    await copyTextToClipboard(shareMessage.value);
     isCopied.value = true;
     setTimeout(() => {
       isCopied.value = false;
     }, 2000);
-  });
+  } catch (err) {
+    console.error('Copy share message failed:', err);
+    errorMsg.value = '複製失敗，請手動選取下方分享文字複製';
+  }
 }
 </script>
 
@@ -86,16 +107,26 @@ function copyCode() {
             <span class="code-validity">⏱️ 有效期：24 小時</span>
           </div>
 
+          <div class="share-preview-box">
+            <div class="share-preview-header">
+              <span class="material-symbols-outlined preview-icon">chat</span>
+              <span>剪貼簿分享內容預覽（含歌曲清單與直達網址）</span>
+            </div>
+            <pre class="share-preview-text">{{ shareMessage }}</pre>
+          </div>
+
+          <div v-if="errorMsg" class="error-tip">{{ errorMsg }}</div>
+
           <div class="copy-actions">
             <button class="btn btn-secondary btn-block" @click="copyCode">
               <span class="material-symbols-outlined btn-icon-inline">
                 {{ isCopied ? 'check' : 'content_copy' }}
               </span>
-              {{ isCopied ? '已複製代碼！' : '一鍵複製分享代碼' }}
+              {{ isCopied ? '已複製分享訊息與網址！' : '一鍵複製分享訊息與網址' }}
             </button>
           </div>
           <p class="guide-tip">
-            👉 朋友或另一台裝置只需在網站頂部點選「<strong>雲端取歌</strong>」並輸入這 6 碼，即可瞬間同步學唱！
+            👉 直接貼到聊天軟體傳給對方，打開網址就會<strong>自動進入匯入確認畫面</strong>；對方也可手動點選「家長專區 → 雲端代碼取歌」輸入這 6 碼！
           </p>
         </div>
       </div>
@@ -228,6 +259,47 @@ function copyCode() {
 .code-validity {
   font-size: 0.75rem;
   color: #64748b;
+}
+
+.share-preview-box {
+  margin-top: 0.85rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.share-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #475569;
+}
+
+.preview-icon {
+  font-size: 1rem;
+  color: #6366f1;
+}
+
+.share-preview-text {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  font-family: inherit;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 150px;
+  overflow-y: auto;
+  user-select: all;
 }
 
 .copy-actions {

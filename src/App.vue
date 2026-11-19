@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import type { Song, SpeechSettings } from './types';
-import { loadSongs, saveSongs, extractYouTubeId, fetchYouTubeTitle, getYouTubeThumbnailUrl } from './utils/songHelper';
+import {
+  loadSongs,
+  saveSongs,
+  extractYouTubeId,
+  fetchYouTubeTitle,
+  getYouTubeThumbnailUrl,
+  isSongIdentical
+} from './utils/songHelper';
 import { LyricSpeaker } from './utils/speechHelper';
 import IconPickerModal from './components/IconPickerModal.vue';
 import BatchExportModal from './components/BatchExportModal.vue';
 import FetchSongModal from './components/FetchSongModal.vue';
-import type { SharedData } from './utils/firebaseService';
 
 const SPEECH_SETTINGS_KEY = 'kid_speech_settings';
 
@@ -23,6 +29,7 @@ const isEditing = ref<boolean>(false);
 const showAddModal = ref<boolean>(false);
 const showBatchExport = ref<boolean>(false);
 const showFetchModal = ref<boolean>(false);
+const initialFetchCode = ref<string>('');
 const showActionMenu = ref<boolean>(false);
 const showParentMenu = ref<boolean>(false);
 const showSongDrawer = ref<boolean>(false); // 行動裝置專屬：歌庫抽屜
@@ -125,6 +132,29 @@ const lyricParagraphs = computed(() => {
     .filter((p) => p.length > 0);
 });
 
+// 清除網址列上的 ?code= 分享參數（避免重整時重複彈出匯入確認頁）
+function clearShareCodeFromUrl() {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  if (url.searchParams.has('code')) {
+    url.searchParams.delete('code');
+    const cleanUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+    window.history.replaceState({}, '', cleanUrl);
+  }
+}
+
+function openFetchModalManually() {
+  initialFetchCode.value = '';
+  showFetchModal.value = true;
+  showParentMenu.value = false;
+}
+
+function handleCloseFetchModal() {
+  showFetchModal.value = false;
+  initialFetchCode.value = '';
+  clearShareCodeFromUrl();
+}
+
 // 初始化載入
 onMounted(() => {
   songs.value = loadSongs();
@@ -135,6 +165,14 @@ onMounted(() => {
   onWindowResize();
   window.addEventListener('resize', onWindowResize);
   window.addEventListener('click', onWindowClick);
+
+  // 若網址帶有 ?code=XXXXXX 分享參數，自動開啟匯入確認畫面
+  const params = new URLSearchParams(window.location.search);
+  const sharedCode = params.get('code')?.trim();
+  if (sharedCode) {
+    initialFetchCode.value = sharedCode.toUpperCase();
+    showFetchModal.value = true;
+  }
 });
 
 onUnmounted(() => {
@@ -305,18 +343,6 @@ function handleDropdownDelete() {
   deleteCurrentSong();
 }
 
-function isSongIdentical(
-  a: { title: string; lyrics: string; icon?: string; youtubeUrl?: string },
-  b: { title: string; lyrics: string; icon?: string; youtubeUrl?: string }
-): boolean {
-  return (
-    a.title.trim() === b.title.trim() &&
-    a.lyrics.trim() === b.lyrics.trim() &&
-    (a.icon?.trim() || '') === (b.icon?.trim() || '') &&
-    (a.youtubeUrl?.trim() || '') === (b.youtubeUrl?.trim() || '')
-  );
-}
-
 function getUniqueTitle(rawTitle: string, existingTitles: Set<string>): string {
   const title = rawTitle.trim() || '未命名歌曲';
   if (!existingTitles.has(title)) {
@@ -334,16 +360,8 @@ function getUniqueTitle(rawTitle: string, existingTitles: Set<string>): string {
   return unique;
 }
 
-function handleCloudImportSuccess(data: SharedData) {
-  const incomingList: Song[] = [];
-  if (data.format === 'HanaSongs' && Array.isArray(data.songs)) {
-    incomingList.push(...data.songs);
-  } else if (data.song) {
-    incomingList.push(data.song);
-  }
-
-  if (incomingList.length === 0) {
-    alert('⚠️ 該分享代碼內未包含任何歌曲！');
+function handleCloudImportSuccess(selectedSongs: Song[]) {
+  if (!Array.isArray(selectedSongs) || selectedSongs.length === 0) {
     return;
   }
 
@@ -351,7 +369,7 @@ function handleCloudImportSuccess(data: SharedData) {
   const acceptedSongs: Song[] = [];
   let skippedCount = 0;
 
-  for (const raw of incomingList) {
+  for (const raw of selectedSongs) {
     const candidate = {
       title: (raw.title || '未命名歌曲').trim(),
       youtubeUrl: (raw.youtubeUrl || '').trim(),
@@ -386,11 +404,13 @@ function handleCloudImportSuccess(data: SharedData) {
     currentSongId.value = acceptedSongs[0].id;
   }
 
+  clearShareCodeFromUrl();
+
   if (acceptedSongs.length === 0 && skippedCount > 0) {
-    alert(`ℹ️ 匯入的 ${skippedCount} 首歌曲皆已存在且內容完全相同，已為您自動略過。`);
+    alert(`ℹ️ 選取的 ${skippedCount} 首歌曲皆已存在且內容完全相同，已為您自動略過。`);
   } else if (skippedCount > 0) {
     alert(`🎉 成功匯入 ${acceptedSongs.length} 首歌曲！（已自動略過 ${skippedCount} 首完全重複歌曲）`);
-  } else {
+  } else if (acceptedSongs.length > 0) {
     alert(`🎉 成功從雲端同步匯入 ${acceptedSongs.length} 首歌曲！`);
   }
 }
@@ -598,7 +618,7 @@ async function playAllSequentially() {
                 <small>調整語速與停頓時間</small>
               </div>
             </button>
-            <button class="menu-item" @click="showFetchModal = true; showParentMenu = false">
+            <button class="menu-item" @click="openFetchModalManually">
               <span class="material-symbols-outlined menu-icon text-emerald">cloud_download</span>
               <div class="menu-item-text">
                 <strong>雲端代碼取歌</strong>
@@ -1264,11 +1284,13 @@ async function playAllSequentially() {
       @close="showBatchExport = false"
     />
 
-    <!-- 雲端取歌彈窗 (Firebase 輸入 6 碼) -->
+    <!-- 雲端取歌彈窗 (Firebase 輸入 6 碼與匯入確認) -->
     <FetchSongModal
       :show="showFetchModal"
+      :existing-songs="songs"
+      :initial-code="initialFetchCode"
       @import-success="handleCloudImportSuccess"
-      @close="showFetchModal = false"
+      @close="handleCloseFetchModal"
     />
 
     <!-- 圖示挑選開窗 -->

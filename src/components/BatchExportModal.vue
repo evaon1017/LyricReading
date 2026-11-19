@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import type { Song } from '../types';
 import { uploadSongShare } from '../utils/firebaseService';
-import { getYouTubeThumbnailUrl } from '../utils/songHelper';
+import { buildShareMessage, copyTextToClipboard, getYouTubeThumbnailUrl } from '../utils/songHelper';
 
 const props = defineProps<{
   show: boolean;
@@ -18,7 +18,13 @@ const isUploading = ref<boolean>(false);
 const shareCode = ref<string>('');
 const errorMsg = ref<string>('');
 const isCopied = ref<boolean>(false);
-const exportedCount = ref<number>(0);
+const exportedSongs = ref<Song[]>([]);
+
+const exportedCount = computed(() => exportedSongs.value.length);
+const shareMessage = computed(() => {
+  if (!shareCode.value) return '';
+  return buildShareMessage(shareCode.value, exportedSongs.value);
+});
 
 // 當彈窗打開時重置狀態並預設全選
 watch(
@@ -28,6 +34,7 @@ watch(
       shareCode.value = '';
       errorMsg.value = '';
       isCopied.value = false;
+      exportedSongs.value = [];
       selectedSongIds.value = props.songs.map((s) => s.id);
     }
   }
@@ -68,7 +75,7 @@ async function handleCloudExport() {
 
   try {
     const exportList = props.songs.filter((s) => selectedSongIds.value.includes(s.id));
-    exportedCount.value = exportList.length;
+    exportedSongs.value = exportList;
     const code = await uploadSongShare({ songs: exportList });
     shareCode.value = code;
   } catch (err: any) {
@@ -79,20 +86,25 @@ async function handleCloudExport() {
   }
 }
 
-function copyCode() {
-  if (!shareCode.value) return;
-  navigator.clipboard.writeText(shareCode.value).then(() => {
+async function copyCode() {
+  if (!shareMessage.value) return;
+  try {
+    await copyTextToClipboard(shareMessage.value);
     isCopied.value = true;
     setTimeout(() => {
       isCopied.value = false;
     }, 2000);
-  });
+  } catch (err) {
+    console.error('Copy share message failed:', err);
+    errorMsg.value = '複製失敗，請手動選取下方分享文字複製';
+  }
 }
 
 function resetToSelection() {
   shareCode.value = '';
   errorMsg.value = '';
   isCopied.value = false;
+  exportedSongs.value = [];
 }
 </script>
 
@@ -169,7 +181,7 @@ function resetToSelection() {
           <span class="material-symbols-outlined success-icon">check_circle</span>
           <div class="success-text">
             <h4>成功打包 {{ exportedCount }} 首歌曲！</h4>
-            <p>已上傳至雲端空間，可透過下方 6 碼代碼一鍵匯入。</p>
+            <p>已上傳至雲端空間，可複製下方分享訊息傳給朋友一鍵匯入。</p>
           </div>
         </div>
 
@@ -179,17 +191,29 @@ function resetToSelection() {
           <span class="code-validity">⏱️ 有效期：24 小時（過期將自動清除）</span>
         </div>
 
+        <div class="share-preview-box">
+          <div class="share-preview-header">
+            <span class="material-symbols-outlined preview-icon">chat</span>
+            <span>剪貼簿分享內容預覽（含歌曲清單與直達網址）</span>
+          </div>
+          <pre class="share-preview-text">{{ shareMessage }}</pre>
+        </div>
+
+        <div v-if="errorMsg" class="error-tip">
+          ⚠️ {{ errorMsg }}
+        </div>
+
         <div class="copy-actions">
           <button class="btn btn-secondary btn-block" @click="copyCode">
             <span class="material-symbols-outlined btn-icon-inline">
               {{ isCopied ? 'check' : 'content_copy' }}
             </span>
-            {{ isCopied ? '已複製代碼！' : '一鍵複製分享代碼' }}
+            {{ isCopied ? '已複製分享訊息與網址！' : '一鍵複製分享訊息與網址' }}
           </button>
         </div>
 
         <p class="guide-tip">
-          👉 對方只需在網站頂部點選「<strong>匯入</strong>」並輸入這 6 碼，即可瞬間將這 {{ exportedCount }} 首歌曲同步進歌單！
+          👉 直接貼到聊天軟體傳給對方，打開網址就會<strong>自動進入匯入確認畫面</strong>；對方也可手動點選「家長專區 → 雲端代碼取歌」輸入這 6 碼！
         </p>
       </div>
 
@@ -449,6 +473,42 @@ function resetToSelection() {
 .code-validity {
   font-size: 0.8rem;
   color: #94a3b8;
+}
+.share-preview-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.share-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #475569;
+}
+.preview-icon {
+  font-size: 1rem;
+  color: #6366f1;
+}
+.share-preview-text {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  font-family: inherit;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 150px;
+  overflow-y: auto;
+  user-select: all;
 }
 .copy-actions {
   display: flex;
